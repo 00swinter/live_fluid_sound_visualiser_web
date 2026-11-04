@@ -1,0 +1,662 @@
+<script lang="ts">
+  import { controlFor, formatControl, numberControls, type ControlGroup } from '../presets/controlRanges'
+  import type { ButtonEffect, ButtonSlot, Preset } from '../presets/types'
+  import type { FluidBooleanSetting, FluidColor, FluidNumberSetting } from '../fluid/createFluidSim'
+
+  type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
+  type CategoryId = ButtonSlot | 'scroll' | 'cursor' | 'splat' | 'flow' | 'bloom' | 'quality' | 'picture'
+
+  let {
+    presets,
+    activeId,
+    selectPreset,
+    addPreset,
+    commitNumber,
+    commitBoolean,
+    commitColor,
+    setSplat,
+    setCursor,
+    setButton,
+    setScroll,
+  }: {
+    presets: Preset[]
+    activeId: string
+    selectPreset: (id: string) => void
+    addPreset: () => void
+    commitNumber: (key: FluidNumberSetting, value: number) => void
+    commitBoolean: (key: BooleanSetting, value: boolean) => void
+    commitColor: (color: FluidColor) => void
+    setSplat: (patch: Partial<Preset['splat']>) => void
+    setCursor: (axis: 'x' | 'y', patch: Partial<Preset['cursor']['x']>) => void
+    setButton: (slot: ButtonSlot, effect: ButtonEffect) => void
+    setScroll: (patch: Partial<Preset['scroll']>) => void
+  } = $props()
+
+  const categories: { id: CategoryId; label: string; hint: string }[] = [
+    { id: 'left', label: 'Left', hint: 'What the left mouse button does while this preset is active.' },
+    { id: 'right', label: 'Right', hint: 'What the right mouse button does while this preset is active.' },
+    { id: 'middle', label: 'Middle', hint: 'What the middle mouse button does while this preset is active.' },
+    { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
+    { id: 'cursor', label: 'Cursor', hint: 'When movement paints, and which settings follow the cursor position.' },
+    { id: 'splat', label: 'Splat', hint: 'Force, dye, and radius of each velocity splat.' },
+    { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
+    { id: 'bloom', label: 'Bloom', hint: 'Glow around the bright dye.' },
+    { id: 'quality', label: 'Quality', hint: 'Resolution of the simulation and the dye.' },
+    { id: 'picture', label: 'Picture', hint: 'Shading, pause, and the background.' },
+  ]
+
+  let category = $state<CategoryId>('left')
+
+  const preset = $derived(presets.find((item) => item.id === activeId) ?? presets[0])
+  const current = $derived(categories.find((item) => item.id === category) ?? categories[0])
+  const scrollRange = $derived(preset ? controlFor(preset.scroll.setting) : controlFor('CURL'))
+  const buttonSlot = $derived<ButtonSlot | null>(
+    category === 'left' || category === 'right' || category === 'middle' ? category : null,
+  )
+  const numberGroup = $derived<ControlGroup | null>(
+    category === 'flow' ? 'Flow' : category === 'bloom' ? 'Bloom' : category === 'quality' ? 'Quality' : null,
+  )
+
+  function chooseKind(slot: ButtonSlot, kind: ButtonEffect['kind']) {
+    if (!preset || preset[slot].kind === kind) return
+    if (kind === 'extraForce') setButton(slot, { kind, multiplier: 4 })
+    else if (kind === 'widerSplat') setButton(slot, { kind, radius: 1.4 })
+    else if (kind === 'velocitySplat') setButton(slot, { kind: 'velocitySplat' })
+    else setButton(slot, { kind: 'clear' })
+  }
+
+  function chooseAxis(axis: 'x' | 'y', setting: FluidNumberSetting) {
+    const range = controlFor(setting)
+    setCursor(axis, { setting, min: range.min, max: range.max })
+  }
+
+  function chooseScroll(setting: FluidNumberSetting) {
+    const range = controlFor(setting)
+    const span = range.max - range.min
+    const current = preset?.scroll.sensitivity ?? span
+    const sensitivity = current > span ? Math.max(range.step, span / 16) : current
+    setScroll({ setting, min: range.min, max: range.max, sensitivity })
+  }
+
+  function buttonDetail(effect: ButtonEffect) {
+    if (effect.kind === 'extraForce') return 'Force'
+    if (effect.kind === 'widerSplat') return 'Wide'
+    if (effect.kind === 'velocitySplat') return 'Velocity'
+    return 'Clear'
+  }
+
+  function categoryDetail(id: CategoryId) {
+    if (!preset) return ''
+    if (id === 'left' || id === 'right' || id === 'middle') return buttonDetail(preset[id])
+    if (id === 'scroll') return controlFor(preset.scroll.setting).label
+    if (id === 'cursor') return preset.splat.always ? 'Always' : 'Hold'
+    return ''
+  }
+
+  function toHex(color: FluidColor) {
+    const channel = (value: number) =>
+      Math.round(Math.min(255, Math.max(0, value)))
+        .toString(16)
+        .padStart(2, '0')
+    return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`
+  }
+
+  function fromHex(hex: string): FluidColor {
+    const value = Number.parseInt(hex.slice(1), 16)
+    return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
+  }
+</script>
+
+{#snippet slider(
+  label: string,
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  onChange: (value: number) => void,
+)}
+  <label class="field">
+    <span class="name">{label}</span>
+    <span class="readout">{formatControl(value, step)}</span>
+    <input
+      type="range"
+      {min}
+      {max}
+      {step}
+      {value}
+      style:--fill="{(max === min ? 0 : ((value - min) / (max - min)) * 100)}%"
+      oninput={(event) => onChange(Number(event.currentTarget.value))}
+    />
+  </label>
+{/snippet}
+
+{#snippet toggle(label: string, key: BooleanSetting)}
+  <label class="check">
+    <input
+      type="checkbox"
+      checked={preset.settings[key]}
+      onchange={(event) => commitBoolean(key, event.currentTarget.checked)}
+    />
+    <span>{label}</span>
+  </label>
+{/snippet}
+
+{#snippet buttonFields(slot: ButtonSlot)}
+  <label class="field">
+    <span class="name">Behavior</span>
+    <select
+      value={preset[slot].kind}
+      onchange={(event) => chooseKind(slot, event.currentTarget.value as ButtonEffect['kind'])}
+    >
+      <option value="velocitySplat">Velocity splat</option>
+      <option value="extraForce">Extra force</option>
+      <option value="widerSplat">Wider splat</option>
+      <option value="clear">Clear</option>
+    </select>
+  </label>
+  {#if preset[slot].kind === 'extraForce'}
+    {@render slider('Multiplier', preset[slot].multiplier, 1, 12, 0.1, (value) =>
+      setButton(slot, { kind: 'extraForce', multiplier: value }),
+    )}
+  {:else if preset[slot].kind === 'widerSplat'}
+    {@render slider('Radius', preset[slot].radius, 0.2, 3, 0.01, (value) =>
+      setButton(slot, { kind: 'widerSplat', radius: value }),
+    )}
+  {/if}
+  <p class="note aside">Velocity splat, extra force, and wider splat last while the button is held. Clear runs once on press.</p>
+{/snippet}
+
+{#snippet axisFields(axis: 'x' | 'y', label: string, note: string)}
+  {@const map = preset.cursor[axis]}
+  {@const range = controlFor(map.setting)}
+  <div class="axis">
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={map.enabled}
+        onchange={(event) => setCursor(axis, { enabled: event.currentTarget.checked })}
+      />
+      <span>{label}</span>
+    </label>
+    {#if map.enabled}
+      <p class="note aside">{note}</p>
+      <label class="field">
+        <span class="name">Adjusts</span>
+        <span class="readout">{formatControl(preset.settings[map.setting], range.step)}</span>
+        <select
+          value={map.setting}
+          onchange={(event) => chooseAxis(axis, event.currentTarget.value as FluidNumberSetting)}
+        >
+          {#each numberControls as control (control.key)}
+            <option value={control.key}>{control.label}</option>
+          {/each}
+        </select>
+      </label>
+      {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setCursor(axis, { min: value }))}
+      {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setCursor(axis, { max: value }))}
+    {/if}
+  </div>
+{/snippet}
+
+<div class="shell">
+  <div class="top">
+    <div class="chips">
+      {#each presets as item (item.id)}
+        <div class="chip" class:on={item.id === activeId}>
+          <input
+            aria-label="Preset name"
+            value={item.name}
+            spellcheck="false"
+            autocomplete="off"
+            onfocus={() => selectPreset(item.id)}
+            oninput={(event) => (item.name = event.currentTarget.value)}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur()
+            }}
+          />
+        </div>
+      {/each}
+    </div>
+    <button class="add" type="button" aria-label="Add preset" onclick={addPreset}>+</button>
+    <p class="hint">Press T to hide</p>
+  </div>
+
+  {#if preset}
+    <section class="panel">
+      <div class="categories">
+        {#each categories as item (item.id)}
+          <button
+            class="cat"
+            class:on={category === item.id}
+            type="button"
+            aria-pressed={category === item.id}
+            onclick={() => (category = item.id)}
+          >
+            <span class="cat-label">{item.label}</span>
+            {#if categoryDetail(item.id)}
+              <span class="cat-detail">{categoryDetail(item.id)}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      <div class="well">
+        <h2>{current.label}</h2>
+        <p class="note">{current.hint}</p>
+
+        {#if buttonSlot}
+          {@render buttonFields(buttonSlot)}
+        {:else if category === 'scroll'}
+          <label class="field">
+            <span class="name">Adjusts</span>
+            <span class="readout">{formatControl(preset.settings[preset.scroll.setting], scrollRange.step)}</span>
+            <select
+              value={preset.scroll.setting}
+              onchange={(event) => chooseScroll(event.currentTarget.value as FluidNumberSetting)}
+            >
+              {#each numberControls as control (control.key)}
+                <option value={control.key}>{control.label}</option>
+              {/each}
+            </select>
+          </label>
+          {@render slider(
+            'Sensitivity',
+            preset.scroll.sensitivity,
+            scrollRange.step,
+            Math.max(scrollRange.step, scrollRange.max - scrollRange.min),
+            scrollRange.step,
+            (value) => setScroll({ sensitivity: value }),
+          )}
+          {#if preset.scroll.setting === 'DELTA_TIME'}
+            <p class="note aside">0.016 is normal speed. Higher runs the simulation faster, lower runs it slower.</p>
+          {/if}
+          {@render slider('Minimum', preset.scroll.min, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
+            setScroll({ min: value }),
+          )}
+          {@render slider('Maximum', preset.scroll.max, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
+            setScroll({ max: value }),
+          )}
+        {:else if category === 'cursor'}
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={preset.splat.always}
+              onchange={(event) => setSplat({ always: event.currentTarget.checked })}
+            />
+            <span>Paint whenever the cursor moves</span>
+          </label>
+          <p class="note aside">
+            Turn this off to paint only while a button set to Velocity splat is held. Movement speed still sets how hard it pushes.
+          </p>
+          {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
+          {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
+        {:else if category === 'splat'}
+          {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }))}
+          {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }))}
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={preset.splat.colorful}
+              onchange={(event) => setSplat({ colorful: event.currentTarget.checked })}
+            />
+            <span>Shift color while moving</span>
+          </label>
+          {#each numberControls.filter((control) => control.group === 'Splat') as control (control.key)}
+            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+              commitNumber(control.key, value),
+            )}
+          {/each}
+        {:else if numberGroup}
+          {#if category === 'bloom'}
+            {@render toggle('Bloom', 'BLOOM')}
+          {/if}
+          {#each numberControls.filter((control) => control.group === numberGroup) as control (control.key)}
+            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+              commitNumber(control.key, value),
+            )}
+          {/each}
+        {:else if category === 'picture'}
+          {@render toggle('Shading', 'SHADING')}
+          {@render toggle('Paused', 'PAUSED')}
+          {@render toggle('Transparent', 'TRANSPARENT')}
+          <label class="field color">
+            <span class="name">Background</span>
+            <input
+              type="color"
+              value={toHex(preset.settings.BACK_COLOR)}
+              oninput={(event) => commitColor(fromHex(event.currentTarget.value))}
+            />
+          </label>
+        {/if}
+      </div>
+    </section>
+  {/if}
+</div>
+
+<style>
+  .shell {
+    --card: #1b2331;
+    --card-2: #141b27;
+    --line: rgba(255, 255, 255, 0.07);
+    --mint: #3ee0b0;
+    --mint-deep: #14b48a;
+    --ink: #f4f7fb;
+    --muted: #8e99ad;
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px 16px;
+    background: #07080c;
+    color: var(--ink);
+    color-scheme: dark;
+    font: 14px/1.4 'Segoe UI', system-ui, sans-serif;
+  }
+
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    min-width: 0;
+  }
+
+  .chips {
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+    overflow-x: auto;
+    flex: 0 1 auto;
+  }
+
+  .chip {
+    width: 104px;
+    height: 72px;
+    flex: none;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #262f41 0%, var(--card) 100%);
+    color: var(--ink);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .chip.on {
+    border-color: transparent;
+    background: linear-gradient(180deg, #5af0c6 0%, var(--mint-deep) 100%);
+    color: #fff;
+    box-shadow: 0 10px 22px rgba(46, 214, 168, 0.28);
+  }
+
+  .chip input {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: inherit;
+    caret-color: currentColor;
+    text-align: center;
+    font: inherit;
+    font-weight: 650;
+    padding: 0 8px;
+  }
+
+  .chip input:focus {
+    outline: none;
+  }
+
+  .add {
+    flex: none;
+    width: 72px;
+    height: 72px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.18);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    color: #9aa6ba;
+    font-size: 32px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .add:hover {
+    border-color: var(--mint);
+    color: var(--mint);
+    background: rgba(62, 224, 176, 0.06);
+  }
+
+  .hint {
+    margin: 0 0 0 auto;
+    flex: none;
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 16px 16px 14px;
+    background: linear-gradient(180deg, #1e2738 0%, #161d2a 100%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .categories {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    flex: none;
+    padding: 2px 4px 14px;
+  }
+
+  .cat {
+    min-width: 104px;
+    height: 64px;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #262f41 0%, var(--card) 100%);
+    color: var(--ink);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    font: inherit;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+  }
+
+  .chip:hover:not(.on),
+  .cat:hover:not(.on) {
+    border-color: rgba(62, 224, 176, 0.45);
+  }
+
+  .cat.on {
+    border-color: transparent;
+    background: linear-gradient(180deg, #5af0c6 0%, var(--mint-deep) 100%);
+    color: #fff;
+    box-shadow: 0 8px 18px rgba(46, 214, 168, 0.28);
+  }
+
+  .cat-label {
+    font-weight: 650;
+  }
+
+  .cat-detail {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 550;
+    color: #93a0b5;
+  }
+
+  .cat.on .cat-detail {
+    color: rgba(255, 255, 255, 0.82);
+  }
+
+  .add:focus-visible,
+  .cat:focus-visible,
+  .chip:focus-within {
+    outline: 2px solid var(--mint);
+    outline-offset: 2px;
+  }
+
+  .well {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 1.15rem 1.3rem 1.5rem;
+    background: var(--card-2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .well::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .well::-webkit-scrollbar-thumb {
+    background: #2c3548;
+    border-radius: 999px;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 650;
+  }
+
+  .note {
+    margin: 0.25rem 0 1rem;
+    max-width: 36rem;
+    color: var(--muted);
+  }
+
+  .note.aside {
+    margin-top: 0.2rem;
+  }
+
+  .axis {
+    margin-top: 1.25rem;
+  }
+
+  .field {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.15rem 0.75rem;
+    max-width: 32rem;
+    margin: 0 0 0.85rem;
+  }
+
+  .name {
+    color: #c5cedd;
+  }
+
+  .readout {
+    color: var(--mint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type='range'],
+  select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 22px;
+    margin: 0.35rem 0 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--mint) var(--fill), #3a4158 var(--fill));
+  }
+
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    margin-top: -5px;
+    border: 3px solid var(--mint);
+    border-radius: 50%;
+    background: #f7fffb;
+    box-shadow: 0 0 0 4px rgba(62, 224, 176, 0.16);
+  }
+
+  input[type='range']::-moz-range-track {
+    height: 6px;
+    border: 0;
+    border-radius: 999px;
+    background: #3a4158;
+  }
+
+  input[type='range']::-moz-range-progress {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--mint);
+  }
+
+  input[type='range']::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 3px solid var(--mint);
+    border-radius: 50%;
+    background: #f7fffb;
+    box-shadow: 0 0 0 4px rgba(62, 224, 176, 0.16);
+  }
+
+  select {
+    margin-top: 0.35rem;
+    padding: 0.55rem 2rem 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238e99ad' d='M1 1l5 5 5-5'/%3E%3C/svg%3E") no-repeat right 0.75rem center;
+    color: var(--ink);
+    font: inherit;
+    appearance: none;
+  }
+
+  select:focus {
+    outline: none;
+    border-color: var(--mint);
+  }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 32rem;
+    margin: 0 0 0.85rem;
+  }
+
+  .check input {
+    accent-color: var(--mint);
+  }
+
+  .color input {
+    grid-column: auto;
+    width: 2.6rem;
+    height: 1.7rem;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+  }
+</style>
