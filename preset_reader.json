@@ -1,0 +1,87 @@
+{
+  "id": "default",
+  "name": "Default",
+  "splat": {
+    "force": 5,
+    "dye": 0.15,
+    "colorful": true,
+    "paint": "always"
+  },
+  "cursor": {
+    "x": {
+      "enabled": false,
+      "setting": "CURL",
+      "min": 0,
+      "max": 80
+    },
+    "y": {
+      "enabled": false,
+      "setting": "DELTA_TIME",
+      "min": 0,
+      "max": 0.08
+    }
+  },
+  "settings": {
+    "SIM_RESOLUTION": 256,
+    "DYE_RESOLUTION": 1024,
+    "DENSITY_DISSIPATION": 0.9,
+    "VELOCITY_DISSIPATION": 0.95,
+    "PRESSURE_DISSIPATION": 0.8,
+    "PRESSURE_ITERATIONS": 20,
+    "CURL": 15,
+    "DELTA_TIME": 0.016,
+    "SPLAT_RADIUS": 0.3,
+    "BLOOM_ITERATIONS": 8,
+    "BLOOM_RESOLUTION": 256,
+    "BLOOM_INTENSITY": 0.8,
+    "BLOOM_THRESHOLD": 0.6,
+    "BLOOM_SOFT_KNEE": 0.7,
+    "SHADING": true,
+    "BLOOM": false,
+    "PAUSED": false,
+    "TRANSPARENT": false,
+    "BACK_COLOR": {
+      "r": 1,
+      "g": 0,
+      "b": 0
+    }
+  },
+  "left": {
+    "click": "randomSplats",
+    "hold": null,
+    "clickParams": {
+      "count": 10,
+      "speed": 1000,
+      "size": 0.3,
+      "intensity": 0.15,
+      "colors": [
+        16711727,
+        65284,
+        31743,
+        15662848,
+        16449791
+      ]
+    },
+    "holdParams": {}
+  },
+  "right": {
+    "click": null,
+    "hold": "widerSplat",
+    "clickParams": {},
+    "holdParams": {
+      "radius": 1.4
+    }
+  },
+  "middle": {
+    "click": "clear",
+    "hold": null,
+    "clickParams": {},
+    "holdParams": {}
+  },
+  "scroll": {
+    "setting": "CURL",
+    "min": 0,
+    "max": 80,
+    "sensitivity": 6
+  }
+}

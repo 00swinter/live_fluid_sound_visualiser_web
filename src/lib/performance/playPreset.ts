@@ -1,7 +1,8 @@
-import type { FluidColor, FluidSim } from '../fluid/createFluidSim'
+import type { FluidSim } from '../fluid/createFluidSim'
+import { actionParams, clickAction, holdAction, splatColor, type PaintState } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
 import { watchPointer } from '../input/pointerInput'
-import { applySettings, type ButtonEffect, type ButtonSlot, type Preset } from '../presets/types'
+import { applySettings, type ButtonSlot, type Preset } from '../presets/types'
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
 const COLOR_INTERVAL_MS = 100
@@ -22,20 +23,22 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       const height = canvas.clientHeight
       if (width > 0) applyMapped(preset.cursor.x, clamp(move.x / width, 0, 1), move.buttons)
       if (height > 0) applyMapped(preset.cursor.y, clamp(move.y / height, 0, 1), move.buttons)
-      if (!paints(move.buttons)) return
-      const extra = effect(move.buttons, 'extraForce')
-      const force = preset.splat.force * (extra?.multiplier ?? 1)
-      applyRadius(move.buttons)
-      const color = currentColor()
-      sim.splat(move.x, move.y, move.dx * force, move.dy * force, color)
+      const paint = collectHold(move.buttons, move)
+      sim.set('SPLAT_RADIUS', paint.radius ?? getPreset().settings.SPLAT_RADIUS)
+      if (!paint.paint) return
+      sim.splat(move.x, move.y, move.dx * paint.force, move.dy * paint.force, currentColor())
     },
-    onButtons(next) {
+    onButtons(next, point) {
       const preset = getPreset()
       for (const slot of SLOTS) {
-        if (!held[slot] && next[slot] && preset[slot].kind === 'clear') sim.clear()
+        if (held[slot] || !next[slot]) continue
+        const binding = preset[slot]
+        const action = clickAction(binding.click)
+        if (!action) continue
+        action.onPress(actionContext(point), actionParams(action, binding.clickParams))
       }
       held = { ...next }
-      applyRadius(held)
+      syncRadius(held, point)
     },
     onWheel(wheel) {
       const preset = getPreset()
@@ -46,36 +49,52 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
         preset.scroll.max,
       )
       preset.settings[key] = next
-      if (key === 'SPLAT_RADIUS') applyRadius(held)
+      if (key === 'SPLAT_RADIUS') syncRadius(held, { x: 0, y: 0 })
       else sim.set(key, next)
     },
   })
 
-  function currentColor(): FluidColor {
+  function currentColor() {
     const preset = getPreset()
     const now = performance.now()
     if (preset.splat.colorful && now - colorAt >= COLOR_INTERVAL_MS) {
       hue = Math.random()
       colorAt = now
     }
-    const color = hsvToRgb(hue, 1, 1)
-    const dye = preset.splat.dye
-    color.r *= dye
-    color.g *= dye
-    color.b *= dye
-    return color
+    return splatColor(preset.splat.dye, hue)
   }
 
-  function applyRadius(buttons: HeldButtons) {
+  function actionContext(point: { x: number; y: number; dx?: number; dy?: number }) {
     const preset = getPreset()
-    const wide = effect(buttons, 'widerSplat')
-    sim.set('SPLAT_RADIUS', wide ? wide.radius : preset.settings.SPLAT_RADIUS)
+    return {
+      sim,
+      x: point.x,
+      y: point.y,
+      dx: point.dx ?? 0,
+      dy: point.dy ?? 0,
+      width: canvas.clientWidth,
+      height: canvas.clientHeight,
+      dye: preset.splat.dye,
+      colorful: preset.splat.colorful,
+    }
   }
 
-  function paints(buttons: HeldButtons) {
+  function collectHold(buttons: HeldButtons, point: { x: number; y: number; dx?: number; dy?: number }): PaintState {
     const preset = getPreset()
-    if (preset.splat.always) return true
-    return effect(buttons, 'velocitySplat') != null
+    const paint: PaintState = { paint: cursorPaints(preset, buttons), force: preset.splat.force, radius: null }
+    for (const slot of SLOTS) {
+      if (!buttons[slot]) continue
+      const binding = preset[slot]
+      const action = holdAction(binding.hold)
+      if (!action) continue
+      action.onHold(actionContext(point), actionParams(action, binding.holdParams), paint)
+    }
+    return paint
+  }
+
+  function syncRadius(buttons: HeldButtons, point: { x: number; y: number }) {
+    const paint = collectHold(buttons, point)
+    sim.set('SPLAT_RADIUS', paint.radius ?? getPreset().settings.SPLAT_RADIUS)
   }
 
   function applyMapped(axis: Preset['cursor']['x'], amount: number, buttons: HeldButtons) {
@@ -84,41 +103,15 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     const key = axis.setting
     const next = clamp(axis.min + (axis.max - axis.min) * amount, axis.min, axis.max)
     preset.settings[key] = next
-    if (key === 'SPLAT_RADIUS') applyRadius(buttons)
+    if (key === 'SPLAT_RADIUS') syncRadius(buttons, { x: 0, y: 0 })
     else sim.set(key, next)
-  }
-
-  function effect<Kind extends ButtonEffect['kind']>(buttons: HeldButtons, kind: Kind) {
-    const preset = getPreset()
-    for (const slot of SLOTS) {
-      if (!buttons[slot]) continue
-      const buttonEffect = preset[slot]
-      if (buttonEffect.kind === kind) return buttonEffect as Extract<ButtonEffect, { kind: Kind }>
-    }
-    return null
   }
 }
 
-function hsvToRgb(h: number, s: number, v: number): FluidColor {
-  const i = Math.floor(h * 6)
-  const f = h * 6 - i
-  const p = v * (1 - s)
-  const q = v * (1 - f * s)
-  const t = v * (1 - (1 - f) * s)
-  switch (i % 6) {
-    case 0:
-      return { r: v, g: t, b: p }
-    case 1:
-      return { r: q, g: v, b: p }
-    case 2:
-      return { r: p, g: v, b: t }
-    case 3:
-      return { r: p, g: q, b: v }
-    case 4:
-      return { r: t, g: p, b: v }
-    default:
-      return { r: v, g: p, b: q }
-  }
+function cursorPaints(preset: Preset, buttons: HeldButtons) {
+  if (preset.splat.paint === 'left') return buttons.left
+  if (preset.splat.paint === 'right') return buttons.right
+  return true
 }
 
 function clamp(value: number, min: number, max: number) {

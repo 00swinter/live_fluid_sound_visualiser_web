@@ -43,7 +43,7 @@ export function watchPointer(
   canvas: HTMLCanvasElement,
   listener: {
     onMove: (move: PointerMove) => void
-    onButtons?: (buttons: HeldButtons) => void
+    onButtons?: (buttons: HeldButtons, point: { x: number; y: number }) => void
     onWheel?: (wheel: WheelDelta) => void
   },
 ): () => void {
@@ -51,10 +51,10 @@ export function watchPointer(
   let last: { x: number; y: number } | null = null
   let capturedId: number | null = null
 
-  function publishButtons(next: HeldButtons) {
+  function publishButtons(next: HeldButtons, point: { x: number; y: number }) {
     if (sameButtons(buttons, next)) return
     buttons = next
-    listener.onButtons?.({ ...buttons })
+    listener.onButtons?.({ ...buttons }, point)
   }
 
   function pointFrom(event: PointerEvent) {
@@ -73,13 +73,13 @@ export function watchPointer(
     } catch {
       capturedId = null
     }
-    publishButtons(buttonsFrom(event.buttons))
+    publishButtons(buttonsFrom(event.buttons), pointFrom(event))
   }
 
   function onPointerMove(event: PointerEvent) {
     if (capturedId != null && event.pointerId !== capturedId) return
-    publishButtons(buttonsFrom(event.buttons))
     const point = pointFrom(event)
+    publishButtons(buttonsFrom(event.buttons), point)
     if (last) {
       listener.onMove({
         x: point.x,
@@ -99,7 +99,7 @@ export function watchPointer(
 
   function onPointerUp(event: PointerEvent) {
     if (capturedId != null && event.pointerId !== capturedId) return
-    publishButtons(buttonsFrom(event.buttons))
+    publishButtons(buttonsFrom(event.buttons), pointFrom(event))
     if (!anyHeld(buttons)) {
       capturedId = null
       last = null
@@ -107,9 +107,10 @@ export function watchPointer(
   }
 
   function releaseHeld() {
+    const point = last ?? { x: 0, y: 0 }
     capturedId = null
     last = null
-    publishButtons({ ...NONE })
+    publishButtons({ ...NONE }, point)
   }
 
   function onWheel(event: WheelEvent) {

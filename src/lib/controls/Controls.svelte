@@ -1,16 +1,19 @@
 <script lang="ts">
-  import { controlFor, formatControl, numberControls, type ControlGroup } from '../presets/controlRanges'
-  import type { ButtonEffect, ButtonSlot, Preset } from '../presets/types'
+  import { clickAction, clickActions, colorParamToHex, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isColorListParam, isColorParam, isNumberParam, properties, type ControlGroup } from '../behaviors'
+  import type { ButtonBinding, ButtonSlot, Preset } from '../presets/types'
   import type { FluidBooleanSetting, FluidColor, FluidNumberSetting } from '../fluid/createFluidSim'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
-  type CategoryId = ButtonSlot | 'scroll' | 'cursor' | 'splat' | 'flow' | 'bloom' | 'quality' | 'picture'
+  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'splat' | 'flow' | 'bloom' | 'quality' | 'picture'
 
   let {
     presets,
     activeId,
     selectPreset,
     addPreset,
+    duplicatePreset,
+    resetPreset,
+    deletePreset,
     commitNumber,
     commitBoolean,
     commitColor,
@@ -23,21 +26,25 @@
     activeId: string
     selectPreset: (id: string) => void
     addPreset: () => void
+    duplicatePreset: () => void
+    resetPreset: () => void
+    deletePreset: () => void
     commitNumber: (key: FluidNumberSetting, value: number) => void
     commitBoolean: (key: BooleanSetting, value: boolean) => void
     commitColor: (color: FluidColor) => void
     setSplat: (patch: Partial<Preset['splat']>) => void
     setCursor: (axis: 'x' | 'y', patch: Partial<Preset['cursor']['x']>) => void
-    setButton: (slot: ButtonSlot, effect: ButtonEffect) => void
+    setButton: (slot: ButtonSlot, binding: ButtonBinding) => void
     setScroll: (patch: Partial<Preset['scroll']>) => void
   } = $props()
 
   const categories: { id: CategoryId; label: string; hint: string }[] = [
-    { id: 'left', label: 'Left', hint: 'What the left mouse button does while this preset is active.' },
-    { id: 'right', label: 'Right', hint: 'What the right mouse button does while this preset is active.' },
-    { id: 'middle', label: 'Middle', hint: 'What the middle mouse button does while this preset is active.' },
+    { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. Export copies its JSON.' },
+    { id: 'left', label: 'Left', hint: 'Click runs once. Hold lasts while the left button is down.' },
+    { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down.' },
+    { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
-    { id: 'cursor', label: 'Cursor', hint: 'When movement paints, and which settings follow the cursor position.' },
+    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, and which settings follow its position.' },
     { id: 'splat', label: 'Splat', hint: 'Force, dye, and radius of each velocity splat.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'bloom', label: 'Bloom', hint: 'Glow around the bright dye.' },
@@ -57,12 +64,75 @@
     category === 'flow' ? 'Flow' : category === 'bloom' ? 'Bloom' : category === 'quality' ? 'Quality' : null,
   )
 
-  function chooseKind(slot: ButtonSlot, kind: ButtonEffect['kind']) {
-    if (!preset || preset[slot].kind === kind) return
-    if (kind === 'extraForce') setButton(slot, { kind, multiplier: 4 })
-    else if (kind === 'widerSplat') setButton(slot, { kind, radius: 1.4 })
-    else if (kind === 'velocitySplat') setButton(slot, { kind: 'velocitySplat' })
-    else setButton(slot, { kind: 'clear' })
+  function chooseClick(slot: ButtonSlot, id: string) {
+    if (!preset) return
+    const click = id === '' ? null : id
+    if (preset[slot].click === click) return
+    setButton(slot, { ...preset[slot], click, clickParams: defaultParams(clickAction(click)) })
+  }
+
+  function chooseHold(slot: ButtonSlot, id: string) {
+    if (!preset) return
+    const hold = id === '' ? null : id
+    if (preset[slot].hold === hold) return
+    setButton(slot, { ...preset[slot], hold, holdParams: defaultParams(holdAction(hold)) })
+  }
+
+  function setClickParam(slot: ButtonSlot, key: string, value: number | number[]) {
+    if (!preset) return
+    const binding = preset[slot]
+    setButton(slot, { ...binding, clickParams: { ...binding.clickParams, [key]: value } })
+  }
+
+  function setHoldParam(slot: ButtonSlot, key: string, value: number | number[]) {
+    if (!preset) return
+    const binding = preset[slot]
+    setButton(slot, { ...binding, holdParams: { ...binding.holdParams, [key]: value } })
+  }
+
+  let dragKey = $state('')
+  let dragIndex = $state(-1)
+  let dragOver = $state(-1)
+
+  function colorListValue(stored: number | number[] | undefined, fallback: number[]) {
+    return Array.isArray(stored) ? stored : [...fallback]
+  }
+
+  function storedNumber(stored: number | number[] | undefined, fallback: number) {
+    return typeof stored === 'number' ? stored : fallback
+  }
+
+  function startColorDrag(event: DragEvent, key: string, index: number) {
+    dragKey = key
+    dragIndex = index
+    event.dataTransfer?.setData('text/plain', `${key}:${index}`)
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  }
+
+  function allowColorDrop(event: DragEvent, key: string, index: number) {
+    if (dragKey !== key || dragIndex < 0) return
+    event.preventDefault()
+    dragOver = index
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  }
+
+  function dropColor(event: DragEvent, key: string, index: number, colors: number[], onChange: (next: number[]) => void) {
+    event.preventDefault()
+    const from = dragKey === key ? dragIndex : -1
+    dragKey = ''
+    dragIndex = -1
+    dragOver = -1
+    if (from < 0 || from === index) return
+    const next = colors.slice()
+    const [item] = next.splice(from, 1)
+    next.splice(index, 0, item)
+    onChange(next)
+  }
+
+  function endColorDrag() {
+    dragKey = ''
+    dragIndex = -1
+    dragOver = -1
   }
 
   function chooseAxis(axis: 'x' | 'y', setting: FluidNumberSetting) {
@@ -78,18 +148,16 @@
     setScroll({ setting, min: range.min, max: range.max, sensitivity })
   }
 
-  function buttonDetail(effect: ButtonEffect) {
-    if (effect.kind === 'extraForce') return 'Force'
-    if (effect.kind === 'widerSplat') return 'Wide'
-    if (effect.kind === 'velocitySplat') return 'Velocity'
-    return 'Clear'
+  function bindingDetail(binding: ButtonBinding) {
+    return holdAction(binding.hold)?.detail ?? clickAction(binding.click)?.detail ?? 'None'
   }
 
   function categoryDetail(id: CategoryId) {
     if (!preset) return ''
-    if (id === 'left' || id === 'right' || id === 'middle') return buttonDetail(preset[id])
+    if (id === 'preset') return preset.name
+    if (id === 'left' || id === 'right' || id === 'middle') return bindingDetail(preset[id])
     if (id === 'scroll') return controlFor(preset.scroll.setting).label
-    if (id === 'cursor') return preset.splat.always ? 'Always' : 'Hold'
+    if (id === 'cursor') return preset.splat.paint === 'left' ? 'Left' : preset.splat.paint === 'right' ? 'Right' : 'Always'
     return ''
   }
 
@@ -104,6 +172,51 @@
   function fromHex(hex: string): FluidColor {
     const value = Number.parseInt(hex.slice(1), 16)
     return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
+  }
+
+  let exportLabel = $state('Export')
+  let copyTimer = 0
+
+  function exportPreset() {
+    if (!preset) return
+    const json = JSON.stringify($state.snapshot(preset), null, 2)
+    if (copyText(json)) {
+      showExportResult('Copied')
+      return
+    }
+    void navigator.clipboard.writeText(json).then(
+      () => showExportResult('Copied'),
+      () => showExportResult('Copy failed'),
+    )
+  }
+
+  function copyText(json: string) {
+    const onCopy = (event: ClipboardEvent) => {
+      event.preventDefault()
+      event.clipboardData?.setData('text/plain', json)
+    }
+    document.addEventListener('copy', onCopy)
+    const area = document.createElement('textarea')
+    area.value = json
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.append(area)
+    area.select()
+    let ok = false
+    try {
+      ok = document.execCommand('copy')
+    } finally {
+      document.removeEventListener('copy', onCopy)
+      area.remove()
+    }
+    return ok
+  }
+
+  function showExportResult(label: string) {
+    exportLabel = label
+    window.clearTimeout(copyTimer)
+    copyTimer = window.setTimeout(() => (exportLabel = 'Export'), 1500)
   }
 </script>
 
@@ -141,29 +254,116 @@
   </label>
 {/snippet}
 
+{#snippet colorList(key: string, label: string, colors: number[], onChange: (next: number[]) => void)}
+  <div class="colors">
+    <span class="name">{label}</span>
+    <div class="swatches" role="list">
+      {#each colors as color, index (index)}
+        <div
+          class="swatch"
+          role="listitem"
+          class:over={dragKey === key && dragOver === index && dragIndex !== index}
+          ondragover={(event) => allowColorDrop(event, key, index)}
+          ondrop={(event) => dropColor(event, key, index, colors, onChange)}
+        >
+          <button
+            class="swatch-delete"
+            type="button"
+            aria-label="Remove color"
+            onclick={() => onChange(colors.filter((_, item) => item !== index))}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+          <input
+            type="color"
+            aria-label={`${label} ${index + 1}`}
+            value={colorParamToHex(color)}
+            oninput={(event) => {
+              const next = colors.slice()
+              next[index] = hexToColorParam(event.currentTarget.value)
+              onChange(next)
+            }}
+          />
+          <button
+            class="swatch-handle"
+            type="button"
+            aria-label="Drag to reorder"
+            draggable="true"
+            ondragstart={(event) => startColorDrag(event, key, index)}
+            ondragend={endColorDrag}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="6" cy="4" r="1.15" />
+              <circle cx="10" cy="4" r="1.15" />
+              <circle cx="6" cy="8" r="1.15" />
+              <circle cx="10" cy="8" r="1.15" />
+              <circle cx="6" cy="12" r="1.15" />
+              <circle cx="10" cy="12" r="1.15" />
+            </svg>
+          </button>
+        </div>
+      {/each}
+      <button class="swatch-add" type="button" onclick={() => onChange([...colors, 0xffffff])}>Add color</button>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet actionParams(
+  params: typeof clickActions[number]['params'],
+  stored: Record<string, number | number[]>,
+  setParam: (key: string, value: number | number[]) => void,
+)}
+  {#each params ?? [] as param (param.key)}
+    {#if isColorListParam(param)}
+      {@render colorList(param.key, param.label, colorListValue(stored[param.key], param.default), (colors) => setParam(param.key, colors))}
+    {:else if isColorParam(param)}
+      <label class="field color">
+        <span class="name">{param.label}</span>
+        <input
+          type="color"
+          value={colorParamToHex(storedNumber(stored[param.key], param.default))}
+          oninput={(event) => setParam(param.key, hexToColorParam(event.currentTarget.value))}
+        />
+      </label>
+    {:else if isNumberParam(param)}
+      {@render slider(
+        param.label,
+        storedNumber(stored[param.key], param.default),
+        param.min,
+        param.max,
+        param.step,
+        (value) => setParam(param.key, value),
+      )}
+    {/if}
+  {/each}
+{/snippet}
 {#snippet buttonFields(slot: ButtonSlot)}
+  {@const binding = preset[slot]}
+  {@const click = clickAction(binding.click)}
+  {@const hold = holdAction(binding.hold)}
   <label class="field">
-    <span class="name">Behavior</span>
-    <select
-      value={preset[slot].kind}
-      onchange={(event) => chooseKind(slot, event.currentTarget.value as ButtonEffect['kind'])}
-    >
-      <option value="velocitySplat">Velocity splat</option>
-      <option value="extraForce">Extra force</option>
-      <option value="widerSplat">Wider splat</option>
-      <option value="clear">Clear</option>
+    <span class="name">Click</span>
+    <select value={binding.click ?? ''} onchange={(event) => chooseClick(slot, event.currentTarget.value)}>
+      <option value="">None</option>
+      {#each clickActions as action (action.id)}
+        <option value={action.id}>{action.label}</option>
+      {/each}
     </select>
   </label>
-  {#if preset[slot].kind === 'extraForce'}
-    {@render slider('Multiplier', preset[slot].multiplier, 1, 12, 0.1, (value) =>
-      setButton(slot, { kind: 'extraForce', multiplier: value }),
-    )}
-  {:else if preset[slot].kind === 'widerSplat'}
-    {@render slider('Radius', preset[slot].radius, 0.2, 3, 0.01, (value) =>
-      setButton(slot, { kind: 'widerSplat', radius: value }),
-    )}
-  {/if}
-  <p class="note aside">Velocity splat, extra force, and wider splat last while the button is held. Clear runs once on press.</p>
+  {@render actionParams(click?.params, binding.clickParams, (key, value) => setClickParam(slot, key, value))}
+  <label class="field">
+    <span class="name">Hold</span>
+    <select value={binding.hold ?? ''} onchange={(event) => chooseHold(slot, event.currentTarget.value)}>
+      <option value="">None</option>
+      {#each holdActions as action (action.id)}
+        <option value={action.id}>{action.label}</option>
+      {/each}
+    </select>
+  </label>
+  {@render actionParams(hold?.params, binding.holdParams, (key, value) => setHoldParam(slot, key, value))}
+  <p class="note aside">Click runs once when the button goes down. Hold lasts while it stays down.</p>
 {/snippet}
 
 {#snippet axisFields(axis: 'x' | 'y', label: string, note: string)}
@@ -187,7 +387,7 @@
           value={map.setting}
           onchange={(event) => chooseAxis(axis, event.currentTarget.value as FluidNumberSetting)}
         >
-          {#each numberControls as control (control.key)}
+          {#each properties as control (control.key)}
             <option value={control.key}>{control.label}</option>
           {/each}
         </select>
@@ -244,7 +444,32 @@
         <h2>{current.label}</h2>
         <p class="note">{current.hint}</p>
 
-        {#if buttonSlot}
+        {#if category === 'preset'}
+          <label class="field">
+            <span class="name">Name</span>
+            <input
+              class="text"
+              type="text"
+              aria-label="Preset name"
+              value={preset.name}
+              spellcheck="false"
+              autocomplete="off"
+              oninput={(event) => (preset.name = event.currentTarget.value)}
+              onblur={(event) => {
+                preset.name = event.currentTarget.value.trim() || 'Preset'
+              }}
+            />
+          </label>
+          <div class="actions">
+            <button class="action" type="button" onclick={duplicatePreset}>Duplicate</button>
+            <button class="action" type="button" onclick={resetPreset}>Reset</button>
+            <button class="action" type="button" onclick={exportPreset}>{exportLabel}</button>
+            <button class="action danger" type="button" onclick={deletePreset} disabled={presets.length < 2}>Delete</button>
+          </div>
+          {#if presets.length < 2}
+            <p class="note aside">The last preset stays, so there is always one to play.</p>
+          {/if}
+        {:else if buttonSlot}
           {@render buttonFields(buttonSlot)}
         {:else if category === 'scroll'}
           <label class="field">
@@ -254,7 +479,7 @@
               value={preset.scroll.setting}
               onchange={(event) => chooseScroll(event.currentTarget.value as FluidNumberSetting)}
             >
-              {#each numberControls as control (control.key)}
+              {#each properties as control (control.key)}
                 <option value={control.key}>{control.label}</option>
               {/each}
             </select>
@@ -277,16 +502,22 @@
             setScroll({ max: value }),
           )}
         {:else if category === 'cursor'}
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={preset.splat.always}
-              onchange={(event) => setSplat({ always: event.currentTarget.checked })}
-            />
-            <span>Paint whenever the cursor moves</span>
+          <label class="field">
+            <span class="name">Paint</span>
+            <select
+              value={preset.splat.paint}
+              onchange={(event) => {
+                const paint = event.currentTarget.value
+                if (paint === 'always' || paint === 'left' || paint === 'right') setSplat({ paint })
+              }}
+            >
+              <option value="always">Whenever the cursor moves</option>
+              <option value="left">While the left button is dragged</option>
+              <option value="right">While the right button is dragged</option>
+            </select>
           </label>
           <p class="note aside">
-            Turn this off to paint only while a button set to Velocity splat is held. Movement speed still sets how hard it pushes.
+            Left and Right paint while that button is held. Set the button itself to None unless you also want a click or hold effect.
           </p>
           {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
           {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
@@ -301,7 +532,7 @@
             />
             <span>Shift color while moving</span>
           </label>
-          {#each numberControls.filter((control) => control.group === 'Splat') as control (control.key)}
+          {#each properties.filter((control) => control.group === 'Splat') as control (control.key)}
             {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
               commitNumber(control.key, value),
             )}
@@ -310,7 +541,7 @@
           {#if category === 'bloom'}
             {@render toggle('Bloom', 'BLOOM')}
           {/if}
-          {#each numberControls.filter((control) => control.group === numberGroup) as control (control.key)}
+          {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
             {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
               commitNumber(control.key, value),
             )}
@@ -658,5 +889,181 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     background: transparent;
+  }
+
+  input.text {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 0.35rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #101722;
+    color: var(--ink);
+    font: inherit;
+  }
+
+  input.text:focus {
+    outline: none;
+    border-color: var(--mint);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    max-width: 32rem;
+  }
+
+  .action {
+    flex: 1 1 7rem;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #262f41;
+    color: var(--ink);
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .action:hover {
+    border-color: var(--mint);
+  }
+
+  .action.danger:hover:not(:disabled) {
+    border-color: #e05a6a;
+    color: #ffb4be;
+  }
+
+  .action:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 2px;
+  }
+
+  .colors {
+    max-width: 32rem;
+    margin: 0 0 0.85rem;
+  }
+
+  .swatches {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.35rem;
+  }
+
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .swatch.over {
+    outline: 1px solid var(--mint);
+    outline-offset: 3px;
+    border-radius: 10px;
+  }
+
+  .swatch input[type='color'] {
+    flex: 1;
+    height: 32px;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #101722;
+    cursor: pointer;
+  }
+
+  .swatch input[type='color']::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .swatch input[type='color']::-webkit-color-swatch {
+    border: 0;
+    border-radius: 7px;
+  }
+
+  .swatch-delete,
+  .swatch-handle {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #8e99ad;
+  }
+
+  .swatch-delete {
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .swatch:hover .swatch-delete,
+  .swatch:focus-within .swatch-delete {
+    opacity: 1;
+  }
+
+  .swatch-delete:hover {
+    color: #ffb4be;
+    background: rgba(224, 90, 106, 0.16);
+  }
+
+  .swatch-handle {
+    cursor: grab;
+  }
+
+  .swatch-handle:active {
+    cursor: grabbing;
+  }
+
+  .swatch-delete svg,
+  .swatch-handle svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .swatch-delete svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+  }
+
+  .swatch-handle svg {
+    fill: currentColor;
+  }
+
+  .swatch-add {
+    align-self: flex-start;
+    margin-top: 0.15rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    background: transparent;
+    color: #9aa6ba;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .swatch-add:hover {
+    border-color: var(--mint);
+    color: var(--mint);
+  }
+
+  .swatch-delete:focus-visible,
+  .swatch-handle:focus-visible,
+  .swatch-add:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 2px;
   }
 </style>

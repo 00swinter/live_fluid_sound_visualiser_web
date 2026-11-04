@@ -1,15 +1,17 @@
+import { properties } from '../behaviors'
 import type { FluidColor, FluidBooleanSetting, FluidNumberSetting, FluidSim } from '../fluid/createFluidSim'
 
 export type ScrollSetting = FluidNumberSetting
 
 export type ButtonSlot = 'left' | 'right' | 'middle'
 
-/** Held effects last while the button is down. `clear` runs once on press. */
-export type ButtonEffect =
-  | { kind: 'velocitySplat' }
-  | { kind: 'extraForce'; multiplier: number }
-  | { kind: 'widerSplat'; radius: number }
-  | { kind: 'clear' }
+/** One mouse button. `click` and `hold` are ids from `src/lib/behaviors.ts`. */
+export type ButtonBinding = {
+  click: string | null
+  hold: string | null
+  clickParams: Record<string, number | number[]>
+  holdParams: Record<string, number | number[]>
+}
 
 /** Maps one screen axis onto a setting. Disabled axes do nothing. */
 export type AxisMap = {
@@ -33,8 +35,8 @@ export type Preset = {
     force: number
     dye: number
     colorful: boolean
-    /** Movement paints even when no button is held. */
-    always: boolean
+    /** Always, or only while the left or right button is dragged. */
+    paint: 'always' | 'left' | 'right'
   }
   /** Screen position mapped like two wheels. Left and top are the minimum. */
   cursor: {
@@ -42,9 +44,9 @@ export type Preset = {
     y: AxisMap
   }
   settings: PresetSettings
-  left: ButtonEffect
-  right: ButtonEffect
-  middle: ButtonEffect
+  left: ButtonBinding
+  right: ButtonBinding
+  middle: ButtonBinding
   scroll: {
     setting: ScrollSetting
     min: number
@@ -55,23 +57,7 @@ export type Preset = {
 }
 
 export function applySettings(sim: FluidSim, settings: PresetSettings) {
-  const numbers: FluidNumberSetting[] = [
-    'SIM_RESOLUTION',
-    'DYE_RESOLUTION',
-    'DENSITY_DISSIPATION',
-    'VELOCITY_DISSIPATION',
-    'PRESSURE_DISSIPATION',
-    'PRESSURE_ITERATIONS',
-    'CURL',
-    'DELTA_TIME',
-    'SPLAT_RADIUS',
-    'BLOOM_ITERATIONS',
-    'BLOOM_RESOLUTION',
-    'BLOOM_INTENSITY',
-    'BLOOM_THRESHOLD',
-    'BLOOM_SOFT_KNEE',
-  ]
-  for (const key of numbers) sim.set(key, settings[key])
+  for (const property of properties) sim.set(property.key, settings[property.key])
   sim.set('SHADING', settings.SHADING)
   sim.set('PAUSED', settings.PAUSED)
   sim.set('BLOOM', settings.BLOOM)
