@@ -22,8 +22,6 @@
     }
   },
   "settings": {
-    "SIM_RESOLUTION": 256,
-    "DYE_RESOLUTION": 1024,
     "DENSITY_DISSIPATION": 0.99,
     "VELOCITY_DISSIPATION": 0.98,
     "PRESSURE_DISSIPATION": 0.8,

@@ -1,20 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import Controls from './lib/controls/Controls.svelte'
-  import { createFluidSim, type FluidBooleanSetting, type FluidColor, type FluidNumberSetting, type FluidSim } from './lib/fluid/createFluidSim'
+  import { createFluidSim, type FluidBooleanSetting, type FluidColor, type FluidSim } from './lib/fluid/createFluidSim'
   import { playPreset } from './lib/performance/playPreset'
   import { defaultPreset } from './lib/presets/defaultPreset'
-  import { loadPresetLibrary, savePresetLibrary } from './lib/presets/storage'
-  import { applySettings, type AxisMap, type ButtonBinding, type ButtonSlot, type Preset } from './lib/presets/types'
+import { loadPerformance, loadPresetLibrary, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
+import { applySettings, type AxisMap, type ButtonBinding, type ButtonSlot, type Preset } from './lib/presets/types'
+import type { PresetNumberSetting } from './lib/behaviors'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
 
   const stored = loadPresetLibrary()
+  const storedPerformance = loadPerformance()
 
   let canvas: HTMLCanvasElement | undefined
   let showUi = $state(false)
   let presets = $state<Preset[]>(stored.presets)
   let activeId = $state(stored.activeId)
+  let performance = $state<PerformanceSettings>({ ...storedPerformance })
   let sim: FluidSim | undefined
 
   $effect(() => {
@@ -23,13 +26,24 @@
     return () => window.clearTimeout(handle)
   })
 
+  $effect(() => {
+    const snapshot = $state.snapshot(performance)
+    const handle = window.setTimeout(() => savePerformance(snapshot), 200)
+    return () => window.clearTimeout(handle)
+  })
+
   function livePreset() {
     return presets.find((item) => item.id === activeId) ?? presets[0]
   }
 
-  function commitNumber(key: FluidNumberSetting, value: number) {
+  function commitNumber(key: PresetNumberSetting, value: number) {
     const preset = livePreset()
     preset.settings[key] = value
+    sim?.set(key, value)
+  }
+
+  function commitPerformance(key: keyof PerformanceSettings, value: number) {
+    performance[key] = value
     sim?.set(key, value)
   }
 
@@ -142,6 +156,8 @@
     if (!canvas) return
     const fluid = createFluidSim(canvas)
     sim = fluid
+    fluid.set('SIM_RESOLUTION', performance.SIM_RESOLUTION)
+    fluid.set('DYE_RESOLUTION', performance.DYE_RESOLUTION)
     const stopPreset = playPreset(canvas, fluid, livePreset)
 
     function onKey(event: KeyboardEvent) {
@@ -180,6 +196,8 @@
     {setCursor}
     {setButton}
     {setScroll}
+    {performance}
+    {commitPerformance}
   />
 </div>
 

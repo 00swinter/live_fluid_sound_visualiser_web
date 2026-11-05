@@ -1,9 +1,16 @@
-import { properties } from '../behaviors'
-import type { FluidNumberSetting } from '../fluid/createFluidSim'
+import { properties, snapControl, type ParamValue, type PerformanceSetting } from '../behaviors'
 import { defaultPreset } from './defaultPreset'
 import type { AxisMap, ButtonBinding, Preset, PresetSettings, ScrollSetting } from './types'
 
 const STORAGE_KEY = 'live-fluid-presets'
+const PERFORMANCE_KEY = 'live-fluid-performance'
+
+export type PerformanceSettings = Record<PerformanceSetting, number>
+
+const performanceDefaults: PerformanceSettings = {
+  SIM_RESOLUTION: 256,
+  DYE_RESOLUTION: 1024,
+}
 
 export type PresetLibrary = {
   activeId: string
@@ -27,6 +34,58 @@ export function savePresetLibrary(library: PresetLibrary) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
   } catch {
     // A full or blocked store should not stop the show.
+  }
+}
+
+/** Resolution shared by every preset. The first visit keeps the resolution already saved on the active preset. */
+export function loadPerformance(): PerformanceSettings {
+  try {
+    const raw = localStorage.getItem(PERFORMANCE_KEY)
+    if (raw) return parsePerformance(JSON.parse(raw))
+  } catch {
+    // Fall through to the preset that was playing before resolution became global.
+  }
+  return performanceFromLibrary() ?? { ...performanceDefaults }
+}
+
+export function savePerformance(settings: PerformanceSettings) {
+  try {
+    localStorage.setItem(PERFORMANCE_KEY, JSON.stringify(settings))
+  } catch {
+    // A full or blocked store should not stop the show.
+  }
+}
+
+function parsePerformance(raw: unknown): PerformanceSettings {
+  const value = raw && typeof raw === 'object' ? (raw as Partial<PerformanceSettings>) : {}
+  return {
+    SIM_RESOLUTION: snapPerformance('SIM_RESOLUTION', value.SIM_RESOLUTION),
+    DYE_RESOLUTION: snapPerformance('DYE_RESOLUTION', value.DYE_RESOLUTION),
+  }
+}
+
+function snapPerformance(key: PerformanceSetting, value: unknown) {
+  return snapControl(key, finite(value, performanceDefaults[key]))
+}
+
+function performanceFromLibrary(): PerformanceSettings | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const library = JSON.parse(raw) as { activeId?: unknown; presets?: unknown }
+    if (!Array.isArray(library.presets)) return null
+    const active = library.presets.find((item) => {
+      return !!item && typeof item === 'object' && (item as { id?: unknown }).id === library.activeId
+    })
+    const preset = active ?? library.presets[0]
+    if (!preset || typeof preset !== 'object') return null
+    const settings = (preset as { settings?: unknown }).settings
+    if (!settings || typeof settings !== 'object') return null
+    const value = settings as Partial<PerformanceSettings>
+    if (typeof value.SIM_RESOLUTION !== 'number' && typeof value.DYE_RESOLUTION !== 'number') return null
+    return parsePerformance(value)
+  } catch {
+    return null
   }
 }
 
@@ -136,20 +195,22 @@ function idOrNull(value: unknown, fallback: string | null) {
   return typeof value === 'string' ? value : fallback
 }
 
-function paramRecord(raw: unknown): Record<string, number | number[]> {
+function paramRecord(raw: unknown): Record<string, ParamValue> {
   if (!raw || typeof raw !== 'object') return {}
-  const out: Record<string, number | number[]> = {}
+  const out: Record<string, ParamValue> = {}
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value === 'number' && Number.isFinite(value)) out[key] = value
-    if (!Array.isArray(value)) continue
-    const colors = value.filter((color): color is number => typeof color === 'number' && Number.isFinite(color))
-    out[key] = colors.map((color) => color & 0xffffff)
+    else if (typeof value === 'string') out[key] = value
+    else if (Array.isArray(value)) {
+      const colors = value.filter((color): color is number => typeof color === 'number' && Number.isFinite(color))
+      out[key] = colors.map((color) => color & 0xffffff)
+    }
   }
   return out
 }
 
 function settingOf(value: unknown, fallback: ScrollSetting): ScrollSetting {
-  return typeof value === 'string' && propertyKeys.has(value) ? (value as FluidNumberSetting) : fallback
+  return typeof value === 'string' && propertyKeys.has(value) ? (value as ScrollSetting) : fallback
 }
 
 function finite(value: unknown, fallback: number) {

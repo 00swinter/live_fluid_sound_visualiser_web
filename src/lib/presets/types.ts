@@ -1,7 +1,7 @@
-import { properties } from '../behaviors'
-import type { FluidColor, FluidBooleanSetting, FluidNumberSetting, FluidSim } from '../fluid/createFluidSim'
+import { properties, type ParamValue, type PresetNumberSetting } from '../behaviors'
+import type { FluidColor, FluidBooleanSetting, FluidSim } from '../fluid/createFluidSim'
 
-export type ScrollSetting = FluidNumberSetting
+export type ScrollSetting = PresetNumberSetting
 
 export type ButtonSlot = 'left' | 'right' | 'middle'
 
@@ -9,8 +9,8 @@ export type ButtonSlot = 'left' | 'right' | 'middle'
 export type ButtonBinding = {
   click: string | null
   hold: string | null
-  clickParams: Record<string, number | number[]>
-  holdParams: Record<string, number | number[]>
+  clickParams: Record<string, ParamValue>
+  holdParams: Record<string, ParamValue>
 }
 
 /** Maps one screen axis onto a setting. Disabled axes do nothing. */
@@ -23,7 +23,7 @@ export type AxisMap = {
 
 export type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
 
-export type PresetSettings = Record<FluidNumberSetting, number> &
+export type PresetSettings = Record<PresetNumberSetting, number> &
   Record<BooleanSetting, boolean> & {
     BACK_COLOR: FluidColor
   }

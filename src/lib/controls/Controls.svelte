@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { clickAction, clickActions, colorParamToHex, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isColorListParam, isColorParam, isNumberParam, properties, type ControlGroup } from '../behaviors'
+  import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramEase, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
   import type { ButtonBinding, ButtonSlot, Preset } from '../presets/types'
-  import type { FluidBooleanSetting, FluidColor, FluidNumberSetting } from '../fluid/createFluidSim'
+  import type { PerformanceSettings } from '../presets/storage'
+  import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
-  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'splat' | 'flow' | 'bloom' | 'quality' | 'picture'
+  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'flow' | 'bloom' | 'picture'
 
   let {
     presets,
@@ -21,6 +22,8 @@
     setCursor,
     setButton,
     setScroll,
+    performance,
+    commitPerformance,
   }: {
     presets: Preset[]
     activeId: string
@@ -29,30 +32,31 @@
     duplicatePreset: () => void
     resetPreset: () => void
     deletePreset: () => void
-    commitNumber: (key: FluidNumberSetting, value: number) => void
+    commitNumber: (key: PresetNumberSetting, value: number) => void
     commitBoolean: (key: BooleanSetting, value: boolean) => void
     commitColor: (color: FluidColor) => void
     setSplat: (patch: Partial<Preset['splat']>) => void
     setCursor: (axis: 'x' | 'y', patch: Partial<Preset['cursor']['x']>) => void
     setButton: (slot: ButtonSlot, binding: ButtonBinding) => void
     setScroll: (patch: Partial<Preset['scroll']>) => void
+    performance: PerformanceSettings
+    commitPerformance: (key: PerformanceSetting, value: number) => void
   } = $props()
 
   const categories: { id: CategoryId; label: string; hint: string }[] = [
     { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. Export copies its JSON.' },
-    { id: 'left', label: 'Left', hint: 'Click runs once. Hold lasts while the left button is down.' },
-    { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down.' },
-    { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down.' },
+    { id: 'left', label: 'Left', hint: 'Click runs once. Hold lasts while the left button is down. Either one can switch a setting between two values.' },
+    { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down. Either one can switch a setting between two values.' },
+    { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
-    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, and which settings follow its position.' },
-    { id: 'splat', label: 'Splat', hint: 'Force, dye, and radius of each velocity splat.' },
+    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, how hard it paints, and which settings follow its position.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'bloom', label: 'Bloom', hint: 'Glow around the bright dye.' },
-    { id: 'quality', label: 'Quality', hint: 'Resolution of the simulation and the dye.' },
     { id: 'picture', label: 'Picture', hint: 'Shading, pause, and the background.' },
   ]
 
   let category = $state<CategoryId>('left')
+  let showPerformance = $state(false)
 
   const preset = $derived(presets.find((item) => item.id === activeId) ?? presets[0])
   const current = $derived(categories.find((item) => item.id === category) ?? categories[0])
@@ -61,7 +65,7 @@
     category === 'left' || category === 'right' || category === 'middle' ? category : null,
   )
   const numberGroup = $derived<ControlGroup | null>(
-    category === 'flow' ? 'Flow' : category === 'bloom' ? 'Bloom' : category === 'quality' ? 'Quality' : null,
+    category === 'flow' ? 'Flow' : category === 'bloom' ? 'Bloom' : null,
   )
 
   function chooseClick(slot: ButtonSlot, id: string) {
@@ -78,27 +82,29 @@
     setButton(slot, { ...preset[slot], hold, holdParams: defaultParams(holdAction(hold)) })
   }
 
-  function setClickParam(slot: ButtonSlot, key: string, value: number | number[]) {
+  function setClickParam(slot: ButtonSlot, key: string, value: ParamValue) {
     if (!preset) return
     const binding = preset[slot]
-    setButton(slot, { ...binding, clickParams: { ...binding.clickParams, [key]: value } })
+    const params = commitParam(clickAction(binding.click)?.params, binding.clickParams, key, value)
+    setButton(slot, { ...binding, clickParams: params })
   }
 
-  function setHoldParam(slot: ButtonSlot, key: string, value: number | number[]) {
+  function setHoldParam(slot: ButtonSlot, key: string, value: ParamValue) {
     if (!preset) return
     const binding = preset[slot]
-    setButton(slot, { ...binding, holdParams: { ...binding.holdParams, [key]: value } })
+    const params = commitParam(holdAction(binding.hold)?.params, binding.holdParams, key, value)
+    setButton(slot, { ...binding, holdParams: params })
   }
 
   let dragKey = $state('')
   let dragIndex = $state(-1)
   let dragOver = $state(-1)
 
-  function colorListValue(stored: number | number[] | undefined, fallback: number[]) {
+  function colorListValue(stored: ParamValue | undefined, fallback: number[]) {
     return Array.isArray(stored) ? stored : [...fallback]
   }
 
-  function storedNumber(stored: number | number[] | undefined, fallback: number) {
+  function storedNumber(stored: ParamValue | undefined, fallback: number) {
     return typeof stored === 'number' ? stored : fallback
   }
 
@@ -135,12 +141,12 @@
     dragOver = -1
   }
 
-  function chooseAxis(axis: 'x' | 'y', setting: FluidNumberSetting) {
+  function chooseAxis(axis: 'x' | 'y', setting: PresetNumberSetting) {
     const range = controlFor(setting)
     setCursor(axis, { setting, min: range.min, max: range.max })
   }
 
-  function chooseScroll(setting: FluidNumberSetting) {
+  function chooseScroll(setting: PresetNumberSetting) {
     const range = controlFor(setting)
     const span = range.max - range.min
     const current = preset?.scroll.sensitivity ?? span
@@ -149,7 +155,14 @@
   }
 
   function bindingDetail(binding: ButtonBinding) {
-    return holdAction(binding.hold)?.detail ?? clickAction(binding.click)?.detail ?? 'None'
+    const hold = holdAction(binding.hold)
+    const click = clickAction(binding.click)
+    const action = hold ?? click
+    if (!action) return 'None'
+    const stored = hold ? binding.holdParams : binding.clickParams
+    const setting = action.params?.find(isSettingParam)
+    if (setting) return controlFor(paramSetting(stored, setting.key, setting.default)).label
+    return action.detail
   }
 
   function categoryDetail(id: CategoryId) {
@@ -312,8 +325,8 @@
 
 {#snippet actionParams(
   params: typeof clickActions[number]['params'],
-  stored: Record<string, number | number[]>,
-  setParam: (key: string, value: number | number[]) => void,
+  stored: Record<string, ParamValue>,
+  setParam: (key: string, value: ParamValue) => void,
 )}
   {#each params ?? [] as param (param.key)}
     {#if isColorListParam(param)}
@@ -327,13 +340,34 @@
           oninput={(event) => setParam(param.key, hexToColorParam(event.currentTarget.value))}
         />
       </label>
+    {:else if isSettingParam(param)}
+      {@const chosen = paramSetting(stored, param.key, param.default)}
+      <label class="field">
+        <span class="name">{param.label}</span>
+        <span class="readout">{formatControl(preset.settings[chosen], controlFor(chosen).step)}</span>
+        <select value={chosen} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
+          {#each properties as control (control.key)}
+            <option value={control.key}>{control.label}</option>
+          {/each}
+        </select>
+      </label>
+    {:else if isChoiceParam(param)}
+      <label class="field">
+        <span class="name">{param.label}</span>
+        <select value={paramEase(stored, param.key)} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
+          {#each param.options as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
     {:else if isNumberParam(param)}
+      {@const range = rangeFor(param, stored)}
       {@render slider(
         param.label,
         storedNumber(stored[param.key], param.default),
-        param.min,
-        param.max,
-        param.step,
+        range.min,
+        range.max,
+        range.step,
         (value) => setParam(param.key, value),
       )}
     {/if}
@@ -343,33 +377,51 @@
   {@const binding = preset[slot]}
   {@const click = clickAction(binding.click)}
   {@const hold = holdAction(binding.hold)}
-  <label class="field">
-    <span class="name">Click</span>
-    <select value={binding.click ?? ''} onchange={(event) => chooseClick(slot, event.currentTarget.value)}>
-      <option value="">None</option>
-      {#each clickActions as action (action.id)}
-        <option value={action.id}>{action.label}</option>
-      {/each}
-    </select>
-  </label>
-  {@render actionParams(click?.params, binding.clickParams, (key, value) => setClickParam(slot, key, value))}
-  <label class="field">
-    <span class="name">Hold</span>
-    <select value={binding.hold ?? ''} onchange={(event) => chooseHold(slot, event.currentTarget.value)}>
-      <option value="">None</option>
-      {#each holdActions as action (action.id)}
-        <option value={action.id}>{action.label}</option>
-      {/each}
-    </select>
-  </label>
-  {@render actionParams(hold?.params, binding.holdParams, (key, value) => setHoldParam(slot, key, value))}
+  <div class="group">
+    <label class="field">
+      <span class="name">Click</span>
+      <select value={binding.click ?? ''} onchange={(event) => chooseClick(slot, event.currentTarget.value)}>
+        <option value="">None</option>
+        {#each clickActions as action (action.id)}
+          <option value={action.id}>{action.label}</option>
+        {/each}
+      </select>
+    </label>
+    {#if click && (click.params?.length || click.note)}
+      <div class="group-body">
+        {@render actionParams(click.params, binding.clickParams, (key, value) => setClickParam(slot, key, value))}
+        {#if click.note}
+          <p class="note aside">{click.note}</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+  <div class="group">
+    <label class="field">
+      <span class="name">Hold</span>
+      <select value={binding.hold ?? ''} onchange={(event) => chooseHold(slot, event.currentTarget.value)}>
+        <option value="">None</option>
+        {#each holdActions as action (action.id)}
+          <option value={action.id}>{action.label}</option>
+        {/each}
+      </select>
+    </label>
+    {#if hold && (hold.params?.length || hold.note)}
+      <div class="group-body">
+        {@render actionParams(hold.params, binding.holdParams, (key, value) => setHoldParam(slot, key, value))}
+        {#if hold.note}
+          <p class="note aside">{hold.note}</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
   <p class="note aside">Click runs once when the button goes down. Hold lasts while it stays down.</p>
 {/snippet}
 
 {#snippet axisFields(axis: 'x' | 'y', label: string, note: string)}
   {@const map = preset.cursor[axis]}
   {@const range = controlFor(map.setting)}
-  <div class="axis">
+  <div class="group">
     <label class="check">
       <input
         type="checkbox"
@@ -379,21 +431,23 @@
       <span>{label}</span>
     </label>
     {#if map.enabled}
-      <p class="note aside">{note}</p>
-      <label class="field">
-        <span class="name">Adjusts</span>
-        <span class="readout">{formatControl(preset.settings[map.setting], range.step)}</span>
-        <select
-          value={map.setting}
-          onchange={(event) => chooseAxis(axis, event.currentTarget.value as FluidNumberSetting)}
-        >
-          {#each properties as control (control.key)}
-            <option value={control.key}>{control.label}</option>
-          {/each}
-        </select>
-      </label>
-      {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setCursor(axis, { min: value }))}
-      {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setCursor(axis, { max: value }))}
+      <div class="group-body">
+        <p class="note aside">{note}</p>
+        <label class="field">
+          <span class="name">Adjusts</span>
+          <span class="readout">{formatControl(preset.settings[map.setting], range.step)}</span>
+          <select
+            value={map.setting}
+            onchange={(event) => chooseAxis(axis, event.currentTarget.value as PresetNumberSetting)}
+          >
+            {#each properties as control (control.key)}
+              <option value={control.key}>{control.label}</option>
+            {/each}
+          </select>
+        </label>
+        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setCursor(axis, { min: value }))}
+        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setCursor(axis, { max: value }))}
+      </div>
     {/if}
   </div>
 {/snippet}
@@ -419,6 +473,15 @@
     </div>
     <button class="add" type="button" aria-label="Add preset" onclick={addPreset}>+</button>
     <p class="hint">Press T to hide</p>
+    <button
+      class="perf"
+      class:on={showPerformance}
+      type="button"
+      aria-pressed={showPerformance}
+      onclick={() => (showPerformance = !showPerformance)}
+    >
+      Performance
+    </button>
   </div>
 
   {#if preset}
@@ -427,10 +490,13 @@
         {#each categories as item (item.id)}
           <button
             class="cat"
-            class:on={category === item.id}
+            class:on={category === item.id && !showPerformance}
             type="button"
-            aria-pressed={category === item.id}
-            onclick={() => (category = item.id)}
+            aria-pressed={category === item.id && !showPerformance}
+            onclick={() => {
+              showPerformance = false
+              category = item.id
+            }}
           >
             <span class="cat-label">{item.label}</span>
             {#if categoryDetail(item.id)}
@@ -441,10 +507,18 @@
       </div>
 
       <div class="well">
-        <h2>{current.label}</h2>
-        <p class="note">{current.hint}</p>
+        <h2>{showPerformance ? 'Performance' : current.label}</h2>
+        <p class="note">
+          {showPerformance ? 'Shared by every preset. Lower these if the simulation starts to lag.' : current.hint}
+        </p>
 
-        {#if category === 'preset'}
+        {#if showPerformance}
+          {#each performanceControls as control (control.key)}
+            {@render slider(control.label, performance[control.key], control.min, control.max, control.step, (value) =>
+              commitPerformance(control.key, value),
+            )}
+          {/each}
+        {:else if category === 'preset'}
           <label class="field">
             <span class="name">Name</span>
             <input
@@ -472,80 +546,97 @@
         {:else if buttonSlot}
           {@render buttonFields(buttonSlot)}
         {:else if category === 'scroll'}
-          <label class="field">
-            <span class="name">Adjusts</span>
-            <span class="readout">{formatControl(preset.settings[preset.scroll.setting], scrollRange.step)}</span>
-            <select
-              value={preset.scroll.setting}
-              onchange={(event) => chooseScroll(event.currentTarget.value as FluidNumberSetting)}
-            >
-              {#each properties as control (control.key)}
-                <option value={control.key}>{control.label}</option>
-              {/each}
-            </select>
-          </label>
-          {@render slider(
-            'Sensitivity',
-            preset.scroll.sensitivity,
-            scrollRange.step,
-            Math.max(scrollRange.step, scrollRange.max - scrollRange.min),
-            scrollRange.step,
-            (value) => setScroll({ sensitivity: value }),
-          )}
-          {#if preset.scroll.setting === 'DELTA_TIME'}
-            <p class="note aside">0.016 is normal speed. Higher runs the simulation faster, lower runs it slower.</p>
-          {/if}
-          {@render slider('Minimum', preset.scroll.min, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
-            setScroll({ min: value }),
-          )}
-          {@render slider('Maximum', preset.scroll.max, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
-            setScroll({ max: value }),
-          )}
+          <div class="group">
+            <label class="field">
+              <span class="name">Adjusts</span>
+              <span class="readout">{formatControl(preset.settings[preset.scroll.setting], scrollRange.step)}</span>
+              <select
+                value={preset.scroll.setting}
+                onchange={(event) => chooseScroll(event.currentTarget.value as PresetNumberSetting)}
+              >
+                {#each properties as control (control.key)}
+                  <option value={control.key}>{control.label}</option>
+                {/each}
+              </select>
+            </label>
+            <div class="group-body">
+              {@render slider(
+                'Sensitivity',
+                preset.scroll.sensitivity,
+                scrollRange.step,
+                Math.max(scrollRange.step, scrollRange.max - scrollRange.min),
+                scrollRange.step,
+                (value) => setScroll({ sensitivity: value }),
+              )}
+              {#if preset.scroll.setting === 'DELTA_TIME'}
+                <p class="note aside">0.016 is normal speed. Higher runs the simulation faster, lower runs it slower.</p>
+              {/if}
+              {@render slider('Minimum', preset.scroll.min, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
+                setScroll({ min: value }),
+              )}
+              {@render slider('Maximum', preset.scroll.max, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
+                setScroll({ max: value }),
+              )}
+            </div>
+          </div>
         {:else if category === 'cursor'}
-          <label class="field">
-            <span class="name">Paint</span>
-            <select
-              value={preset.splat.paint}
-              onchange={(event) => {
-                const paint = event.currentTarget.value
-                if (paint === 'always' || paint === 'left' || paint === 'right') setSplat({ paint })
-              }}
-            >
-              <option value="always">Whenever the cursor moves</option>
-              <option value="left">While the left button is dragged</option>
-              <option value="right">While the right button is dragged</option>
-            </select>
-          </label>
-          <p class="note aside">
-            Left and Right paint while that button is held. Set the button itself to None unless you also want a click or hold effect.
-          </p>
+          <div class="group">
+            <label class="field">
+              <span class="name">Paint</span>
+              <select
+                value={preset.splat.paint}
+                onchange={(event) => {
+                  const paint = event.currentTarget.value
+                  if (paint === 'always' || paint === 'left' || paint === 'right') setSplat({ paint })
+                }}
+              >
+                <option value="always">Whenever the cursor moves</option>
+                <option value="left">While the left button is dragged</option>
+                <option value="right">While the right button is dragged</option>
+              </select>
+            </label>
+            <div class="group-body">
+              <p class="note aside">
+                Left and Right paint while that button is held. Set the button itself to None unless you also want a click or hold effect.
+              </p>
+              {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }))}
+              {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }))}
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={preset.splat.colorful}
+                  onchange={(event) => setSplat({ colorful: event.currentTarget.checked })}
+                />
+                <span>Shift color while moving</span>
+              </label>
+              {#each properties.filter((control) => control.group === 'Splat') as control (control.key)}
+                {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+                  commitNumber(control.key, value),
+                )}
+              {/each}
+            </div>
+          </div>
           {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
           {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
-        {:else if category === 'splat'}
-          {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }))}
-          {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }))}
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={preset.splat.colorful}
-              onchange={(event) => setSplat({ colorful: event.currentTarget.checked })}
-            />
-            <span>Shift color while moving</span>
-          </label>
-          {#each properties.filter((control) => control.group === 'Splat') as control (control.key)}
-            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-              commitNumber(control.key, value),
-            )}
-          {/each}
         {:else if numberGroup}
           {#if category === 'bloom'}
-            {@render toggle('Bloom', 'BLOOM')}
+            <div class="group">
+              {@render toggle('Bloom', 'BLOOM')}
+              <div class="group-body">
+                {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
+                  {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+                    commitNumber(control.key, value),
+                  )}
+                {/each}
+              </div>
+            </div>
+          {:else}
+            {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
+              {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+                commitNumber(control.key, value),
+              )}
+            {/each}
           {/if}
-          {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
-            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-              commitNumber(control.key, value),
-            )}
-          {/each}
         {:else if category === 'picture'}
           {@render toggle('Shading', 'SHADING')}
           {@render toggle('Paused', 'PAUSED')}
@@ -665,6 +756,29 @@
     white-space: nowrap;
   }
 
+  .perf {
+    flex: none;
+    height: 40px;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: linear-gradient(180deg, #262f41 0%, var(--card) 100%);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .perf:hover:not(.on) {
+    border-color: rgba(62, 224, 176, 0.45);
+  }
+
+  .perf.on {
+    border-color: transparent;
+    background: linear-gradient(180deg, #5af0c6 0%, var(--mint-deep) 100%);
+    color: #fff;
+  }
+
   .panel {
     flex: 1;
     min-height: 0;
@@ -735,6 +849,7 @@
   }
 
   .add:focus-visible,
+  .perf:focus-visible,
   .cat:focus-visible,
   .chip:focus-within {
     outline: 2px solid var(--mint);
@@ -778,8 +893,43 @@
     margin-top: 0.2rem;
   }
 
-  .axis {
-    margin-top: 1.25rem;
+  .group {
+    max-width: 34rem;
+    margin: 0 0 0.85rem;
+    padding: 0.8rem 0.95rem 0.15rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #101722;
+  }
+
+  .group > .note {
+    margin: 0.15rem 0 0.7rem;
+  }
+
+  .group > .field,
+  .group > .check {
+    margin-bottom: 0.7rem;
+  }
+
+  .group-body {
+    margin: 0 0 0.75rem;
+    padding: 0.15rem 0 0.1rem 0.9rem;
+    border-left: 2px solid rgba(62, 224, 176, 0.45);
+  }
+
+  .group .field,
+  .group .check,
+  .group .colors,
+  .group-body .note {
+    max-width: none;
+  }
+
+  .group-body .note {
+    margin: 0 0 0.75rem;
+  }
+
+  .group-body > :last-child {
+    margin-bottom: 0.2rem;
   }
 
   .field {

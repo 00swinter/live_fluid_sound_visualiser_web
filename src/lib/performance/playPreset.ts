@@ -1,5 +1,5 @@
 import type { FluidSim } from '../fluid/createFluidSim'
-import { actionParams, clickAction, holdAction, splatColor, type PaintState } from '../behaviors'
+import { actionParams, clickAction, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
 import { watchPointer } from '../input/pointerInput'
 import { applySettings, type ButtonSlot, type Preset } from '../presets/types'
@@ -14,8 +14,11 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
   let held: HeldButtons = { left: false, right: false, middle: false }
   let hue = Math.random()
   let colorAt = 0
+  let transitions: ActiveTransition[] = []
+  let transitionPreset = ''
+  let frame = 0
 
-  return watchPointer(canvas, {
+  const stopPointer = watchPointer(canvas, {
     onMove(move) {
       if (move.dx === 0 && move.dy === 0) return
       const preset = getPreset()
@@ -30,12 +33,17 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     },
     onButtons(next, point) {
       const preset = getPreset()
+      const ctx = actionContext(point)
       for (const slot of SLOTS) {
-        if (held[slot] || !next[slot]) continue
         const binding = preset[slot]
-        const action = clickAction(binding.click)
-        if (!action) continue
-        action.onPress(actionContext(point), actionParams(action, binding.clickParams))
+        if (!held[slot] && next[slot]) {
+          const action = clickAction(binding.click)
+          if (action) action.onPress(ctx, actionParams(action, binding.clickParams))
+        }
+        if (held[slot] && !next[slot]) {
+          const action = holdAction(binding.hold)
+          if (action?.onRelease) action.onRelease(ctx, actionParams(action, binding.holdParams))
+        }
       }
       held = { ...next }
       syncRadius(held, point)
@@ -51,8 +59,15 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       preset.settings[key] = next
       if (key === 'SPLAT_RADIUS') syncRadius(held, { x: 0, y: 0 })
       else sim.set(key, next)
+      collectHold(held, { x: 0, y: 0 })
     },
   })
+
+  return () => {
+    stopPointer()
+    transitions = []
+    stopFrame()
+  }
 
   function currentColor() {
     const preset = getPreset()
@@ -76,7 +91,77 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       height: canvas.clientHeight,
       dye: preset.splat.dye,
       colorful: preset.splat.colorful,
+      getNumber,
+      setNumber,
+      transitionTarget,
+      animateNumber,
     }
+  }
+
+  function getNumber(key: PresetNumberSetting) {
+    return getPreset().settings[key]
+  }
+
+  function setNumber(key: PresetNumberSetting, value: number) {
+    const preset = getPreset()
+    const next = snapControl(key, value)
+    if (preset.settings[key] === next) return
+    preset.settings[key] = next
+    sim.set(key, next)
+  }
+
+  function transitionTarget(key: PresetNumberSetting) {
+    if (getPreset().id !== transitionPreset) return null
+    return transitions.find((item) => item.key === key)?.to ?? null
+  }
+
+  function animateNumber(key: PresetNumberSetting, value: number, seconds: number, easing: string) {
+    const target = snapControl(key, value)
+    const mode: EaseMode =
+      easing === 'easeIn' || easing === 'easeOut' || easing === 'easeInOut' || easing === 'constant' || easing === 'linear'
+        ? easing
+        : 'easeInOut'
+    const existing = transitions.find((item) => item.key === key)
+    if (existing && existing.to === target && existing.easing === mode && getPreset().id === transitionPreset) return
+    transitions = transitions.filter((item) => item.key !== key)
+    const from = getNumber(key)
+    const duration = Math.max(0, seconds) * 1000
+    if (duration === 0 || from === target) {
+      setNumber(key, target)
+      if (!transitions.length) stopFrame()
+      return
+    }
+    transitionPreset = getPreset().id
+    transitions.push({ key, from, to: target, start: performance.now(), duration, easing: mode })
+    startFrame()
+  }
+
+  function startFrame() {
+    if (frame) return
+    frame = requestAnimationFrame(tick)
+  }
+
+  function stopFrame() {
+    if (!frame) return
+    cancelAnimationFrame(frame)
+    frame = 0
+  }
+
+  function tick(now: number) {
+    frame = 0
+    if (getPreset().id !== transitionPreset) {
+      transitions = []
+      return
+    }
+    const pending: ActiveTransition[] = []
+    for (const item of transitions) {
+      const amount = item.duration <= 0 ? 1 : Math.min(1, (now - item.start) / item.duration)
+      const value = amount >= 1 ? item.to : item.from + (item.to - item.from) * easeBlend(amount, item.easing)
+      setNumber(item.key, value)
+      if (amount < 1) pending.push(item)
+    }
+    transitions = pending
+    if (transitions.length) frame = requestAnimationFrame(tick)
   }
 
   function collectHold(buttons: HeldButtons, point: { x: number; y: number; dx?: number; dy?: number }): PaintState {
@@ -106,6 +191,15 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     if (key === 'SPLAT_RADIUS') syncRadius(buttons, { x: 0, y: 0 })
     else sim.set(key, next)
   }
+}
+
+type ActiveTransition = {
+  key: PresetNumberSetting
+  from: number
+  to: number
+  start: number
+  duration: number
+  easing: EaseMode
 }
 
 function cursorPaints(preset: Preset, buttons: HeldButtons) {
