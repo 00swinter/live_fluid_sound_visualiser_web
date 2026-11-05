@@ -1,6 +1,6 @@
 {
-  "id": "default",
-  "name": "Default",
+  "id": "509d3248-017a-47d1-9402-ef1a782276fb",
+  "name": "default",
   "splat": {
     "force": 5,
     "dye": 0.15,
@@ -22,13 +22,13 @@
     }
   },
   "settings": {
-    "DENSITY_DISSIPATION": 0.99,
+    "DENSITY_DISSIPATION": 0.994,
     "VELOCITY_DISSIPATION": 0.98,
     "PRESSURE_DISSIPATION": 0.8,
     "PRESSURE_ITERATIONS": 20,
-    "CURL": 15,
+    "CURL": 0,
     "DELTA_TIME": 0.016,
-    "SPLAT_RADIUS": 0.3,
+    "SPLAT_RADIUS": 0.16,
     "BLOOM_ITERATIONS": 8,
     "BLOOM_RESOLUTION": 256,
     "BLOOM_INTENSITY": 0.8,
@@ -64,17 +64,27 @@
   },
   "right": {
     "click": null,
-    "hold": "widerSplat",
+    "hold": "holdValue",
     "clickParams": {},
     "holdParams": {
-      "radius": 1.4
+      "setting": "CURL",
+      "released": 0,
+      "held": 15,
+      "easing": "easeInOut",
+      "seconds": 0.5
     }
   },
   "middle": {
-    "click": "clear",
-    "hold": null,
+    "click": null,
+    "hold": "holdValue",
     "clickParams": {},
-    "holdParams": {}
+    "holdParams": {
+      "setting": "DENSITY_DISSIPATION",
+      "released": 0.994,
+      "held": 0.8,
+      "easing": "easeInOut",
+      "seconds": 0
+    }
   },
   "scroll": {
     "setting": "CURL",

@@ -5,7 +5,7 @@
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
-  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'flow' | 'bloom' | 'picture'
+  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'flow' | 'general'
 
   let {
     presets,
@@ -51,8 +51,7 @@
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
     { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, how hard it paints, and which settings follow its position.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
-    { id: 'bloom', label: 'Bloom', hint: 'Glow around the bright dye.' },
-    { id: 'picture', label: 'Picture', hint: 'Shading, pause, and the background.' },
+    { id: 'general', label: 'General', hint: 'Bloom, shading, pause, and the background.' },
   ]
 
   let category = $state<CategoryId>('left')
@@ -64,9 +63,7 @@
   const buttonSlot = $derived<ButtonSlot | null>(
     category === 'left' || category === 'right' || category === 'middle' ? category : null,
   )
-  const numberGroup = $derived<ControlGroup | null>(
-    category === 'flow' ? 'Flow' : category === 'bloom' ? 'Bloom' : null,
-  )
+  const numberGroup = $derived<ControlGroup | null>(category === 'flow' ? 'Flow' : null)
 
   function chooseClick(slot: ButtonSlot, id: string) {
     if (!preset) return
@@ -619,25 +616,22 @@
           {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
           {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
         {:else if numberGroup}
-          {#if category === 'bloom'}
-            <div class="group">
-              {@render toggle('Bloom', 'BLOOM')}
-              <div class="group-body">
-                {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
-                  {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-                    commitNumber(control.key, value),
-                  )}
-                {/each}
-              </div>
+          {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
+            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+              commitNumber(control.key, value),
+            )}
+          {/each}
+        {:else if category === 'general'}
+          <div class="group">
+            {@render toggle('Bloom', 'BLOOM')}
+            <div class="group-body">
+              {#each properties.filter((control) => control.group === 'Bloom') as control (control.key)}
+                {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
+                  commitNumber(control.key, value),
+                )}
+              {/each}
             </div>
-          {:else}
-            {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
-              {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-                commitNumber(control.key, value),
-              )}
-            {/each}
-          {/if}
-        {:else if category === 'picture'}
+          </div>
           {@render toggle('Shading', 'SHADING')}
           {@render toggle('Paused', 'PAUSED')}
           {@render toggle('Transparent', 'TRANSPARENT')}
