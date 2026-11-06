@@ -31,9 +31,21 @@ export type AudioMap = {
   max: number
 }
 
+/** Which part of the sound moves the paint swirl. */
+export const driveSources = [
+  { id: 'bass', label: 'Bass', note: 'Draws a swirl while the bass plays, with a harder push on each beat.' },
+  { id: 'voice', label: 'Voice', note: 'Draws a swirl while vocals and melody play, with a harder push on each beat.' },
+  { id: 'highs', label: 'Highs', note: 'Draws a swirl from cymbals and brightness, with a harder push on each beat.' },
+  { id: 'loudness', label: 'Loudness', note: 'Draws a swirl from the overall volume. Quiet stays still and loud paints harder.' },
+  { id: 'beat', label: 'Beat', note: 'Each kick throws a short swirl that fades before the next hit.' },
+] as const
+
+export type DriveSource = (typeof driveSources)[number]['id']
+
 export type AudioDrive = {
-  /** Bass energy paints the fluid while the source is playing. */
+  /** The chosen band paints the fluid while the source is playing. */
   enabled: boolean
+  source: DriveSource
   force: number
   dye: number
 }
@@ -71,7 +83,7 @@ export const defaultAudio: PresetAudio = {
   bass: { enabled: false, setting: 'SPLAT_RADIUS', min: 0.08, max: 0.5 },
   mid: { enabled: false, setting: 'VELOCITY_DISSIPATION', min: 0.97, max: 0.995 },
   treble: { enabled: false, setting: 'BLOOM_INTENSITY', min: 0.1, max: 1.5 },
-  drive: { enabled: false, force: 7, dye: 1 },
+  drive: { enabled: false, source: 'bass', force: 7, dye: 1 },
 }
 
 export type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
@@ -130,6 +142,7 @@ export function completeAudio(raw: unknown): PresetAudio {
   audio.treble = completeMap(value.treble, audio.treble)
   audio.drive = {
     enabled: typeof value.drive?.enabled === 'boolean' ? value.drive.enabled : audio.drive.enabled,
+    source: driveSource(value.drive?.source),
     force: numberOr(value.drive?.force, audio.drive.force),
     dye: numberOr(value.drive?.dye, audio.drive.dye),
   }
@@ -157,6 +170,10 @@ function paramValues(raw: unknown): Record<string, ParamValue> {
     }
   }
   return out
+}
+
+function driveSource(value: unknown): DriveSource {
+  return driveSources.some((item) => item.id === value) ? (value as DriveSource) : 'bass'
 }
 
 function numberOr(value: unknown, fallback: number) {

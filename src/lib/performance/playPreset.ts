@@ -4,7 +4,7 @@ import type { FluidSim } from '../fluid/createFluidSim'
 import { actionParams, clickAction, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
 import { watchPointer } from '../input/pointerInput'
-import { applySettings, defaultAudio, type AudioMap, type ButtonSlot, type Preset } from '../presets/types'
+import { applySettings, defaultAudio, type AudioMap, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
 const COLOR_INTERVAL_MS = 100
@@ -22,6 +22,8 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
   let timers: number[] = []
   let pitch = 0
   let swirl = Math.random() * Math.PI * 2
+  let beatBrush = 0
+  let beatBrushAt = 0
   let driven: PresetNumberSetting[] = []
   let drivenValue = new Map<PresetNumberSetting, number>()
   let pulsePreset = ''
@@ -114,6 +116,8 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     pitch = frame.pitch
     if (audio.source === 'off') {
       restoreDriven()
+      beatBrush = 0
+      beatBrushAt = 0
       return
     }
     const next = new Set<PresetNumberSetting>()
@@ -160,22 +164,40 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
 
   function driveFluid(frame: AudioFrame) {
     const drive = getPreset().audio?.drive
-    if (!drive?.enabled || frame.bass < 0.02) return
+    const amount = drive?.enabled ? driveAmount(drive.source ?? 'bass', frame) : 0
+    if (!drive?.enabled || amount < 0.02) return
     const width = canvas.clientWidth
     const height = canvas.clientHeight
     if (width < 2 || height < 2) return
-    swirl += 0.05 + frame.bass * 0.45
-    const reach = Math.min(width, height) * (0.08 + frame.bass * 0.28)
+    swirl += 0.05 + amount * 0.45
+    const reach = Math.min(width, height) * (0.08 + amount * 0.28)
     const x = width * 0.5 + Math.cos(swirl) * reach
     const y = height * 0.5 + Math.sin(swirl * 0.87) * reach
-    const speed = drive.force * frame.bass * (frame.beat ? 620 : 260)
+    const speed = drive.force * amount * (frame.beat ? 620 : 260)
     const color = currentColor()
-    const dye = drive.dye * (0.35 + frame.bass * 0.65)
+    const dye = drive.dye * (0.35 + amount * 0.65)
     color.r *= dye
     color.g *= dye
     color.b *= dye
     sim.splat(x, y, Math.cos(swirl) * speed, Math.sin(swirl) * speed, color)
     sim.splat(width - x, height - y, -Math.cos(swirl) * speed * 0.65, -Math.sin(swirl) * speed * 0.65, color)
+  }
+
+  function driveAmount(source: DriveSource, frame: AudioFrame) {
+    if (source !== 'beat') {
+      beatBrush = 0
+      beatBrushAt = 0
+      if (source === 'voice') return frame.mid
+      if (source === 'highs') return frame.treble
+      if (source === 'loudness') return frame.level
+      return frame.bass
+    }
+    const now = performance.now()
+    const dt = beatBrushAt ? Math.min(0.05, Math.max(0, (now - beatBrushAt) / 1000)) : 0.016
+    beatBrushAt = now
+    if (frame.beat) beatBrush = 1
+    else beatBrush *= Math.exp(-dt / 0.14)
+    return beatBrush
   }
 
   function actionContext(point: { x: number; y: number; dx?: number; dy?: number }) {

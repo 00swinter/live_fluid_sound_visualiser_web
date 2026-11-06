@@ -1,7 +1,7 @@
 <script lang="ts">
   import { audio } from '../audio/session.svelte'
   import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramEase, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
-  import type { AudioBand, AudioMap, ButtonBinding, ButtonSlot, Preset } from '../presets/types'
+  import { driveSources, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
@@ -64,7 +64,7 @@
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
     { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, how hard it paints, and which settings follow its position.' },
-    { id: 'audio', label: 'Audio', hint: 'Microphone is the room. System is everything playing on this computer. Beats can run an action, each band can move a setting, and the bass can paint on its own.' },
+    { id: 'audio', label: 'Audio', hint: 'Microphone is the room. System is everything playing on this computer. Beats can run an action, each band can move a setting, and the sound can paint on its own.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'general', label: 'General', hint: 'Bloom, shading, pause, and the background.' },
   ]
@@ -156,6 +156,11 @@
   function chooseAxis(axis: 'x' | 'y', setting: PresetNumberSetting) {
     const range = controlFor(setting)
     setCursor(axis, { setting, min: range.min, max: range.max })
+  }
+
+  function chooseDrive(id: string) {
+    if (!driveSources.some((item) => item.id === id)) return
+    setAudioDrive({ source: id as DriveSource })
   }
 
   function chooseBeat(id: string) {
@@ -782,11 +787,20 @@
                 checked={preset.audio.drive.enabled}
                 onchange={(event) => setAudioDrive({ enabled: event.currentTarget.checked })}
               />
-              <span>Paint with the bass</span>
+              <span>Paint with the sound</span>
             </label>
             {#if preset.audio.drive.enabled}
+              {@const driveSource = driveSources.find((item) => item.id === preset.audio.drive.source) ?? driveSources[0]}
               <div class="group-body">
-                <p class="note aside">Draws a swirl while the bass plays, with a harder push on each beat. It keeps going while this panel is hidden.</p>
+                <label class="field">
+                  <span class="name">Follows</span>
+                  <select value={driveSource.id} onchange={(event) => chooseDrive(event.currentTarget.value)}>
+                    {#each driveSources as item (item.id)}
+                      <option value={item.id}>{item.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <p class="note aside">{driveSource.note} It keeps going while this panel is hidden.</p>
                 {@render slider('Force', preset.audio.drive.force, 0, 30, 0.1, (value) => setAudioDrive({ force: value }))}
                 {@render slider('Dye', preset.audio.drive.dye, 0, 4, 0.05, (value) => setAudioDrive({ dye: value }))}
               </div>
