@@ -5,7 +5,7 @@
   import { playPreset } from './lib/performance/playPreset'
   import { defaultPreset } from './lib/presets/defaultPreset'
 import { loadPerformance, loadPresetLibrary, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
-import { applySettings, type AxisMap, type ButtonBinding, type ButtonSlot, type Preset } from './lib/presets/types'
+import { applySettings, defaultAudio, type AudioBand, type AudioMap, type AxisMap, type ButtonBinding, type ButtonSlot, type Preset } from './lib/presets/types'
 import type { PresetNumberSetting } from './lib/behaviors'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
@@ -69,6 +69,24 @@ import type { PresetNumberSetting } from './lib/behaviors'
 
   function setButton(slot: ButtonSlot, binding: ButtonBinding) {
     livePreset()[slot] = binding
+  }
+
+  function audioConfig() {
+    const preset = livePreset()
+    if (!preset.audio) preset.audio = structuredClone(defaultAudio)
+    return preset.audio
+  }
+
+  function setAudio(patch: Partial<Preset['audio']>) {
+    Object.assign(audioConfig(), patch)
+  }
+
+  function setAudioBand(band: AudioBand, patch: Partial<AudioMap>) {
+    Object.assign(audioConfig()[band], patch)
+  }
+
+  function setAudioDrive(patch: Partial<Preset['audio']['drive']>) {
+    Object.assign(audioConfig().drive, patch)
   }
 
   function setScroll(patch: Partial<Preset['scroll']>) {
@@ -196,6 +214,9 @@ import type { PresetNumberSetting } from './lib/behaviors'
     {setCursor}
     {setButton}
     {setScroll}
+    {setAudio}
+    {setAudioBand}
+    {setAudioDrive}
     {performance}
     {commitPerformance}
   />

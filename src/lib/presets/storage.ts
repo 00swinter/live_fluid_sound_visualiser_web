@@ -1,6 +1,6 @@
 import { properties, snapControl, type ParamValue, type PerformanceSetting } from '../behaviors'
 import { defaultPreset } from './defaultPreset'
-import type { AxisMap, ButtonBinding, Preset, PresetSettings, ScrollSetting } from './types'
+import { completeAudio, type AxisMap, type ButtonBinding, type Preset, type PresetSettings, type ScrollSetting } from './types'
 
 const STORAGE_KEY = 'live-fluid-presets'
 const PERFORMANCE_KEY = 'live-fluid-performance'
@@ -138,6 +138,7 @@ function parsePreset(raw: unknown): Preset | null {
       max: finite(value.scroll?.max, base.scroll.max),
       sensitivity: finite(value.scroll?.sensitivity, base.scroll.sensitivity),
     },
+    audio: completeAudio(value.audio),
   }
 }
 

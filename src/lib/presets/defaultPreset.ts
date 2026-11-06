@@ -1,9 +1,14 @@
 import file from './defaultPreset.json'
-import type { Preset } from './types'
+import { completeAudio, type Preset } from './types'
 
 /**
  * Template for the + button and for Reset.
  * Replace `defaultPreset.json` with a preset exported from the editor.
  * Presets already saved in the browser keep their own values until you reset them.
  */
-export const defaultPreset = file as Preset
+const loaded = file as Omit<Preset, 'audio'> & { audio?: unknown }
+
+export const defaultPreset: Preset = {
+  ...loaded,
+  audio: completeAudio(loaded.audio),
+}

@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { audio } from '../audio/session.svelte'
   import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramEase, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
-  import type { ButtonBinding, ButtonSlot, Preset } from '../presets/types'
+  import type { AudioBand, AudioMap, ButtonBinding, ButtonSlot, Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
-  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'flow' | 'general'
+  type CategoryId = 'preset' | ButtonSlot | 'scroll' | 'cursor' | 'audio' | 'flow' | 'general'
 
   let {
     presets,
@@ -22,6 +23,9 @@
     setCursor,
     setButton,
     setScroll,
+    setAudio,
+    setAudioBand,
+    setAudioDrive,
     performance,
     commitPerformance,
   }: {
@@ -39,9 +43,19 @@
     setCursor: (axis: 'x' | 'y', patch: Partial<Preset['cursor']['x']>) => void
     setButton: (slot: ButtonSlot, binding: ButtonBinding) => void
     setScroll: (patch: Partial<Preset['scroll']>) => void
+    setAudio: (patch: Partial<Preset['audio']>) => void
+    setAudioBand: (band: AudioBand, patch: Partial<AudioMap>) => void
+    setAudioDrive: (patch: Partial<Preset['audio']['drive']>) => void
     performance: PerformanceSettings
     commitPerformance: (key: PerformanceSetting, value: number) => void
   } = $props()
+
+  const meters = [
+    { key: 'level', label: 'Level' },
+    { key: 'bass', label: 'Bass' },
+    { key: 'mid', label: 'Mid' },
+    { key: 'treble', label: 'High' },
+  ] as const
 
   const categories: { id: CategoryId; label: string; hint: string }[] = [
     { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. Export copies its JSON.' },
@@ -50,6 +64,7 @@
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
     { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, how hard it paints, and which settings follow its position.' },
+    { id: 'audio', label: 'Audio', hint: 'Microphone is the room. System is everything playing on this computer. Beats can run an action, each band can move a setting, and the bass can paint on its own.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'general', label: 'General', hint: 'Bloom, shading, pause, and the background.' },
   ]
@@ -143,6 +158,32 @@
     setCursor(axis, { setting, min: range.min, max: range.max })
   }
 
+  function chooseBeat(id: string) {
+    if (!preset) return
+    const beat = id === '' ? null : id
+    if (preset.audio.beat === beat) return
+    setAudio({ beat, beatParams: defaultParams(clickAction(beat)) })
+  }
+
+  function setBeatParam(key: string, value: ParamValue) {
+    if (!preset) return
+    const params = commitParam(clickAction(preset.audio.beat)?.params, preset.audio.beatParams, key, value)
+    setAudio({ beatParams: params })
+  }
+
+  function chooseBand(band: AudioBand, setting: PresetNumberSetting) {
+    const range = controlFor(setting)
+    setAudioBand(band, { setting, min: range.min, max: range.max })
+  }
+
+  function liveBand(band: AudioBand) {
+    if (!preset) return 0
+    const map = preset.audio[band]
+    if (!map.enabled || audio.source === 'off') return preset.settings[map.setting]
+    const amount = audio[band]
+    return Math.min(Math.max(map.min, map.max), Math.max(Math.min(map.min, map.max), map.min + (map.max - map.min) * amount))
+  }
+
   function chooseScroll(setting: PresetNumberSetting) {
     const range = controlFor(setting)
     const span = range.max - range.min
@@ -168,6 +209,11 @@
     if (id === 'left' || id === 'right' || id === 'middle') return bindingDetail(preset[id])
     if (id === 'scroll') return controlFor(preset.scroll.setting).label
     if (id === 'cursor') return preset.splat.paint === 'left' ? 'Left' : preset.splat.paint === 'right' ? 'Right' : 'Always'
+    if (id === 'audio') {
+      if (audio.source === 'mic') return 'Mic'
+      if (audio.source === 'system') return 'System'
+      return clickAction(preset.audio?.beat ?? null)?.detail ?? 'Off'
+    }
     return ''
   }
 
@@ -449,6 +495,40 @@
   </div>
 {/snippet}
 
+{#snippet bandFields(band: AudioBand, label: string, note: string)}
+  {@const map = preset.audio[band]}
+  {@const range = controlFor(map.setting)}
+  <div class="group">
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={map.enabled}
+        onchange={(event) => setAudioBand(band, { enabled: event.currentTarget.checked })}
+      />
+      <span>{label}</span>
+    </label>
+    {#if map.enabled}
+      <div class="group-body">
+        <p class="note aside">{note}</p>
+        <label class="field">
+          <span class="name">Adjusts</span>
+          <span class="readout">{formatControl(liveBand(band), range.step)}</span>
+          <select
+            value={map.setting}
+            onchange={(event) => chooseBand(band, event.currentTarget.value as PresetNumberSetting)}
+          >
+            {#each properties as control (control.key)}
+              <option value={control.key}>{control.label}</option>
+            {/each}
+          </select>
+        </label>
+        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setAudioBand(band, { min: value }))}
+        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setAudioBand(band, { max: value }))}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="shell">
   <div class="top">
     <div class="chips">
@@ -615,6 +695,116 @@
           </div>
           {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
           {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
+        {:else if category === 'audio' && preset.audio}
+          {@const beat = clickAction(preset.audio.beat)}
+          <div class="group">
+            <div class="source-switch" role="group" aria-label="Audio input">
+              <button
+                type="button"
+                class:on={audio.source === 'mic'}
+                disabled={audio.opening}
+                onclick={() => void audio.useMicrophone()}
+              >
+                <span>Microphone</span>
+                <small>Outside</small>
+              </button>
+              <button
+                type="button"
+                class:on={audio.source === 'system'}
+                disabled={audio.opening}
+                onclick={() => void audio.useSystem()}
+              >
+                <span>System</span>
+                <small>This computer</small>
+              </button>
+            </div>
+            {#if audio.source !== 'off'}
+              <div class="actions">
+                <button class="action" type="button" onclick={() => audio.stop()}>Stop</button>
+              </div>
+            {/if}
+            {#if audio.source === 'mic'}
+              <p class="note aside">Listening to the microphone, the sound outside the computer.</p>
+            {:else if audio.source === 'system'}
+              <p class="note aside">Listening to everything playing on this computer. The picture from the share is not shown.</p>
+            {:else}
+              <p class="note aside">
+                Microphone is the room. System is everything playing on this computer. The browser asks once: choose Entire screen and leave system audio on.
+              </p>
+            {/if}
+            {#if audio.message}
+              <p class="note aside warn">{audio.message}</p>
+            {/if}
+            {#if audio.source !== 'off'}
+              <div class="meters" aria-hidden="true">
+                {#each meters as item (item.key)}
+                  <div class="meter-row">
+                    <span>{item.label}</span>
+                    <span class="meter"><span style:width="{audio[item.key] * 100}%"></span></span>
+                  </div>
+                {/each}
+                <div class="meter-row">
+                  <span>Beat</span>
+                  <span class="lamp" class:on={audio.beatOn}></span>
+                </div>
+              </div>
+            {/if}
+            {@render slider('Gain', preset.audio.gain, 0, 4, 0.05, (value) => setAudio({ gain: value }))}
+            {@render slider('Noise floor', preset.audio.floor, 0, 0.4, 0.01, (value) => setAudio({ floor: value }))}
+            <p class="note aside">Gain lifts a quiet source. Raise the noise floor if a quiet room still counts as sound.</p>
+          </div>
+          <div class="group">
+            <label class="field">
+              <span class="name">On beat</span>
+              <select value={preset.audio.beat ?? ''} onchange={(event) => chooseBeat(event.currentTarget.value)}>
+                <option value="">None</option>
+                {#each clickActions as action (action.id)}
+                  <option value={action.id}>{action.label}</option>
+                {/each}
+              </select>
+            </label>
+            {#if beat && (beat.params?.length || beat.note)}
+              <div class="group-body">
+                {@render actionParams(beat.params, preset.audio.beatParams, setBeatParam)}
+                {#if beat.note}
+                  <p class="note aside">{beat.note}</p>
+                {/if}
+              </div>
+            {/if}
+            {@render slider('Sensitivity', preset.audio.beatSensitivity, 0, 1, 0.01, (value) => setAudio({ beatSensitivity: value }))}
+            {@render slider('Gap', preset.audio.beatCooldown, 0.05, 1, 0.01, (value) => setAudio({ beatCooldown: value }))}
+            <p class="note aside">The beat follows the kick, the same 60 Hz band the desktop engine uses. Higher sensitivity catches quieter hits. Gap is the shortest pause between hits.</p>
+          </div>
+          <div class="group">
+            <label class="check">
+              <input
+                type="checkbox"
+                checked={preset.audio.drive.enabled}
+                onchange={(event) => setAudioDrive({ enabled: event.currentTarget.checked })}
+              />
+              <span>Paint with the bass</span>
+            </label>
+            {#if preset.audio.drive.enabled}
+              <div class="group-body">
+                <p class="note aside">Draws a swirl while the bass plays, with a harder push on each beat. It keeps going while this panel is hidden.</p>
+                {@render slider('Force', preset.audio.drive.force, 0, 30, 0.1, (value) => setAudioDrive({ force: value }))}
+                {@render slider('Dye', preset.audio.drive.dye, 0, 4, 0.05, (value) => setAudioDrive({ dye: value }))}
+              </div>
+            {/if}
+          </div>
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={preset.audio.colorFromPitch}
+              onchange={(event) => setAudio({ colorFromPitch: event.currentTarget.checked })}
+            />
+            <span>Color follows pitch</span>
+          </label>
+          <p class="note aside">Low notes stay toward red and higher notes climb the rainbow. Uses the dye amount from Cursor.</p>
+          {@render bandFields('level', 'Map loudness', 'Overall volume. Quiet uses the minimum, loud uses the maximum.')}
+          {@render bandFields('bass', 'Map bass', 'Kick and bass. Quiet uses the minimum, loud uses the maximum.')}
+          {@render bandFields('mid', 'Map mids', 'Vocals and melody. Quiet uses the minimum, loud uses the maximum.')}
+          {@render bandFields('treble', 'Map highs', 'Cymbals and brightness. Quiet uses the minimum, loud uses the maximum.')}
         {:else if numberGroup}
           {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
             {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
@@ -663,9 +853,10 @@
     z-index: 2;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 0;
     padding: 16px 18px 16px;
-    background: #07080c;
+    background: transparent;
+    pointer-events: none;
     color: var(--ink);
     color-scheme: dark;
     font: 14px/1.4 'Segoe UI', system-ui, sans-serif;
@@ -677,6 +868,10 @@
     gap: 10px;
     flex: none;
     min-width: 0;
+    margin: -16px -18px 0;
+    padding: 16px 18px 12px;
+    background: #07080c;
+    pointer-events: auto;
   }
 
   .chips {
@@ -778,11 +973,9 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line);
-    border-radius: 22px;
-    padding: 16px 16px 14px;
-    background: linear-gradient(180deg, #1e2738 0%, #161d2a 100%);
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    padding: 0;
+    background: transparent;
+    pointer-events: none;
   }
 
   .categories {
@@ -791,7 +984,10 @@
     justify-content: center;
     gap: 8px;
     flex: none;
-    padding: 2px 4px 14px;
+    margin: 0 -18px;
+    padding: 2px 22px 14px;
+    background: #07080c;
+    pointer-events: auto;
   }
 
   .cat {
@@ -852,7 +1048,10 @@
 
   .well {
     flex: 1;
+    align-self: flex-start;
+    width: min(38rem, 100%);
     min-height: 0;
+    margin-top: 12px;
     overflow: auto;
     overscroll-behavior: contain;
     border: 1px solid var(--line);
@@ -860,6 +1059,7 @@
     padding: 1.15rem 1.3rem 1.5rem;
     background: var(--card-2);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    pointer-events: auto;
   }
 
   .well::-webkit-scrollbar {
@@ -1052,6 +1252,50 @@
     border-color: var(--mint);
   }
 
+  .source-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    max-width: 28rem;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #141b27;
+  }
+
+  .source-switch button {
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--ink);
+    padding: 0.55rem 0.7rem 0.45rem;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 650;
+  }
+
+  .source-switch button small {
+    display: block;
+    margin-top: 1px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 550;
+  }
+
+  .source-switch button.on {
+    background: linear-gradient(180deg, #5af0c6 0%, var(--mint-deep) 100%);
+    color: #fff;
+  }
+
+  .source-switch button.on small {
+    color: rgba(255, 255, 255, 0.86);
+  }
+
+  .source-switch button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -1083,6 +1327,53 @@
   .action:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+
+  .note.warn {
+    color: #ffb4be;
+  }
+
+  .meters {
+    display: grid;
+    gap: 0.35rem;
+    max-width: 32rem;
+    margin: 0.2rem 0 0.9rem;
+  }
+
+  .meter-row {
+    display: grid;
+    grid-template-columns: 3.2rem 1fr;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .meter {
+    height: 6px;
+    border-radius: 999px;
+    background: #3a4158;
+    overflow: hidden;
+  }
+
+  .meter > span {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: var(--mint);
+  }
+
+  .lamp {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3a4158;
+  }
+
+  .lamp.on {
+    background: var(--mint);
+    box-shadow: 0 0 10px var(--mint);
   }
 
   .action:focus-visible {

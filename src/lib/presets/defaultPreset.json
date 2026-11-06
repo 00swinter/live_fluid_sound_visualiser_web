@@ -91,5 +91,19 @@
     "min": 0,
     "max": 80,
     "sensitivity": 6
+  },
+  "audio": {
+    "gain": 1.25,
+    "floor": 0.06,
+    "beatSensitivity": 0.58,
+    "beatCooldown": 0.16,
+    "beat": null,
+    "beatParams": {},
+    "colorFromPitch": false,
+    "level": { "enabled": false, "setting": "CURL", "min": 0, "max": 45 },
+    "bass": { "enabled": false, "setting": "SPLAT_RADIUS", "min": 0.08, "max": 0.5 },
+    "mid": { "enabled": false, "setting": "VELOCITY_DISSIPATION", "min": 0.97, "max": 0.995 },
+    "treble": { "enabled": false, "setting": "BLOOM_INTENSITY", "min": 0.1, "max": 1.5 },
+    "drive": { "enabled": false, "force": 7, "dye": 1 }
   }
 }

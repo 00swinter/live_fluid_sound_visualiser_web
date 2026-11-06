@@ -30,6 +30,8 @@ export type ActionContext = {
   transitionTarget: (key: PresetNumberSetting) => number | null
   /** Move a setting to a value. `seconds` is the length of the change. Zero jumps. */
   animateNumber: (key: PresetNumberSetting, value: number, seconds: number, easing: string) => void
+  /** Jump a setting to a peak, then ease it back to the value from before the pulse. */
+  pulseNumber: (key: PresetNumberSetting, peak: number, seconds: number) => void
 }
 
 /** Shared paint for this movement. Hold actions can change it. */
@@ -176,6 +178,7 @@ export const clickActions: ClickAction[] = [
       const speed = paramNumber(params, 'speed', 1000)
       const intensity = paramNumber(params, 'intensity', 0.15)
       const colors = paramColors(params, 'colors')
+      const previousRadius = ctx.getNumber('SPLAT_RADIUS')
       ctx.sim.set('SPLAT_RADIUS', paramNumber(params, 'size', 0.3))
       for (let i = 0; i < count; i++) {
         const packed = colors[Math.floor(Math.random() * colors.length)] ?? 0xffffff
@@ -191,6 +194,7 @@ export const clickActions: ClickAction[] = [
           color,
         )
       }
+      ctx.sim.set('SPLAT_RADIUS', previousRadius)
     },
   },
   {
@@ -210,6 +214,21 @@ export const clickActions: ClickAction[] = [
       const basis = aimed ?? ctx.getNumber(setting)
       const next = Math.abs(basis - first) <= Math.abs(basis - second) ? second : first
       moveSetting(ctx, params, setting, next)
+    },
+  },
+  {
+    id: 'pulseValue',
+    label: 'Pulse value',
+    detail: 'Pulse',
+    note: 'Jumps to the peak, then eases back to the value it had before the pulse. Another pulse starts that move over.',
+    params: [
+      { kind: 'setting', key: 'setting', label: 'Setting', default: 'CURL' },
+      { key: 'peak', label: 'Peak', min: 0, max: 150, step: 1, default: 40, rangeFrom: 'setting' },
+      { key: 'seconds', label: 'Return', min: 0.05, max: 2, step: 0.05, default: 0.35 },
+    ],
+    onPress(ctx, params) {
+      const setting = paramSetting(params, 'setting', 'CURL')
+      ctx.pulseNumber(setting, paramNumber(params, 'peak', 40), paramNumber(params, 'seconds', 0.35))
     },
   },
 ]

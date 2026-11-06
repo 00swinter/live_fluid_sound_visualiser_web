@@ -1,8 +1,10 @@
+import { audio, type AudioListenOptions } from '../audio/session.svelte'
+import type { AudioFrame } from '../audio/analyze'
 import type { FluidSim } from '../fluid/createFluidSim'
 import { actionParams, clickAction, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
 import { watchPointer } from '../input/pointerInput'
-import { applySettings, type ButtonSlot, type Preset } from '../presets/types'
+import { applySettings, defaultAudio, type AudioMap, type ButtonSlot, type Preset } from '../presets/types'
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
 const COLOR_INTERVAL_MS = 100
@@ -17,6 +19,13 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
   let transitions: ActiveTransition[] = []
   let transitionPreset = ''
   let frame = 0
+  let timers: number[] = []
+  let pitch = 0
+  let swirl = Math.random() * Math.PI * 2
+  let driven: PresetNumberSetting[] = []
+  let drivenValue = new Map<PresetNumberSetting, number>()
+  let pulsePreset = ''
+  let pulses = new Map<PresetNumberSetting, { home: number; generation: number }>()
 
   const stopPointer = watchPointer(canvas, {
     onMove(move) {
@@ -63,20 +72,110 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     },
   })
 
+  audio.setBeatInput(readAudioOptions)
+  const stopAudio = audio.watch(onAudio)
+
   return () => {
     stopPointer()
+    stopAudio()
+    audio.setBeatInput(null)
+    for (const handle of timers) window.clearTimeout(handle)
+    timers = []
     transitions = []
+    pulses.clear()
+    restoreDriven()
     stopFrame()
   }
 
   function currentColor() {
     const preset = getPreset()
+    if (preset.audio?.colorFromPitch && audio.source !== 'off') return splatColor(preset.splat.dye, pitch)
     const now = performance.now()
     if (preset.splat.colorful && now - colorAt >= COLOR_INTERVAL_MS) {
       hue = Math.random()
       colorAt = now
     }
     return splatColor(preset.splat.dye, hue)
+  }
+
+  function readAudioOptions(): AudioListenOptions {
+    const cfg = getPreset().audio ?? defaultAudio
+    return {
+      gain: cfg.gain,
+      floor: cfg.floor,
+      sensitivity: cfg.beatSensitivity,
+      cooldown: cfg.beatCooldown,
+    }
+  }
+
+  function onAudio(frame: AudioFrame) {
+    const preset = getPreset()
+    const cfg = preset.audio ?? defaultAudio
+    pitch = frame.pitch
+    if (audio.source === 'off') {
+      restoreDriven()
+      return
+    }
+    const next = new Set<PresetNumberSetting>()
+    applyBand(cfg.level, frame.level, next)
+    applyBand(cfg.bass, frame.bass, next)
+    applyBand(cfg.mid, frame.mid, next)
+    applyBand(cfg.treble, frame.treble, next)
+    for (const key of driven) {
+      if (!next.has(key)) sim.set(key, getPreset().settings[key])
+    }
+    driven = [...next]
+    if (frame.beat && cfg.beat) {
+      const action = clickAction(cfg.beat)
+      if (action) {
+        action.onPress(
+          actionContext({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }),
+          actionParams(action, cfg.beatParams),
+        )
+      }
+    }
+    driveFluid(frame)
+  }
+
+  function applyBand(map: AudioMap, amount: number, drivenKeys: Set<PresetNumberSetting>) {
+    if (!map.enabled) return
+    const key = map.setting
+    const next = snapControl(key, clamp(map.min + (map.max - map.min) * amount, map.min, map.max))
+    drivenKeys.add(key)
+    const reallocates = key === 'BLOOM_ITERATIONS' || key === 'BLOOM_RESOLUTION'
+    if (reallocates && drivenValue.get(key) === next) return
+    drivenValue.set(key, next)
+    sim.set(key, next)
+  }
+
+  function restoreDriven() {
+    if (!driven.length) return
+    const preset = getPreset()
+    for (const key of driven) {
+      drivenValue.delete(key)
+      sim.set(key, preset.settings[key])
+    }
+    driven = []
+  }
+
+  function driveFluid(frame: AudioFrame) {
+    const drive = getPreset().audio?.drive
+    if (!drive?.enabled || frame.bass < 0.02) return
+    const width = canvas.clientWidth
+    const height = canvas.clientHeight
+    if (width < 2 || height < 2) return
+    swirl += 0.05 + frame.bass * 0.45
+    const reach = Math.min(width, height) * (0.08 + frame.bass * 0.28)
+    const x = width * 0.5 + Math.cos(swirl) * reach
+    const y = height * 0.5 + Math.sin(swirl * 0.87) * reach
+    const speed = drive.force * frame.bass * (frame.beat ? 620 : 260)
+    const color = currentColor()
+    const dye = drive.dye * (0.35 + frame.bass * 0.65)
+    color.r *= dye
+    color.g *= dye
+    color.b *= dye
+    sim.splat(x, y, Math.cos(swirl) * speed, Math.sin(swirl) * speed, color)
+    sim.splat(width - x, height - y, -Math.cos(swirl) * speed * 0.65, -Math.sin(swirl) * speed * 0.65, color)
   }
 
   function actionContext(point: { x: number; y: number; dx?: number; dy?: number }) {
@@ -95,7 +194,44 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       setNumber,
       transitionTarget,
       animateNumber,
+      pulseNumber,
     }
+  }
+
+  function after(seconds: number, run: () => void) {
+    const id = getPreset().id
+    const handle = window.setTimeout(() => {
+      timers = timers.filter((item) => item !== handle)
+      if (getPreset().id !== id) return
+      run()
+    }, Math.max(0, seconds) * 1000)
+    timers.push(handle)
+  }
+
+  function pulseNumber(key: PresetNumberSetting, peak: number, seconds: number) {
+    const preset = getPreset()
+    if (preset.id !== pulsePreset) {
+      pulses = new Map()
+      pulsePreset = preset.id
+    }
+    let state = pulses.get(key)
+    if (!state) {
+      state = { home: getNumber(key), generation: 0 }
+      pulses.set(key, state)
+    }
+    state.generation += 1
+    const generation = state.generation
+    const home = state.home
+    const hold = Math.max(0.05, seconds)
+    animateNumber(key, peak, 0, 'linear')
+    after(0.03, () => {
+      if (getPreset().id !== preset.id || pulses.get(key)?.generation !== generation) return
+      animateNumber(key, home, hold, 'easeOut')
+      after(hold + 0.03, () => {
+        if (pulses.get(key)?.generation !== generation) return
+        pulses.delete(key)
+      })
+    })
   }
 
   function getNumber(key: PresetNumberSetting) {
