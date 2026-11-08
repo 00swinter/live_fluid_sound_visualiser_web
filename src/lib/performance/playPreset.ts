@@ -9,8 +9,13 @@ import { applySettings, defaultAudio, defaultSplatColors, splatColorMode, type A
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
 
-/** Movement can paint and map screen position. Buttons and the wheel read the active preset. */
-export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: () => Preset): () => void {
+/** Movement can paint and map screen position. Buttons and the wheel read the active preset. The bottom-left corner steps to another preset. */
+export function playPreset(
+  canvas: HTMLCanvasElement,
+  sim: FluidSim,
+  getPreset: () => Preset,
+  stepPreset: (direction: 1 | -1) => void,
+): () => void {
   applySettings(sim, getPreset().settings)
 
   let held: HeldButtons = { left: false, right: false, middle: false }
@@ -32,6 +37,7 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
   let drivenValue = new Map<PresetNumberSetting, number>()
   let pulsePreset = ''
   let pulses = new Map<PresetNumberSetting, { home: number; generation: number }>()
+  let cornerWheel = 0
 
   const stopPointer = watchPointer(canvas, {
     onMove(move) {
@@ -70,6 +76,17 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       syncRadius(held, point)
     },
     onWheel(wheel) {
+      if (inPresetCorner(wheel.x, wheel.y, canvas.clientWidth, canvas.clientHeight)) {
+        cornerWheel += wheel.notches
+        const steps = Math.trunc(cornerWheel)
+        if (steps !== 0) {
+          cornerWheel -= steps
+          const direction = steps > 0 ? 1 : -1
+          for (let i = 0; i < Math.abs(steps); i += 1) stepPreset(direction)
+        }
+        return
+      }
+      cornerWheel = 0
       const preset = getPreset()
       const key = preset.scroll.setting
       const next = clamp(
@@ -443,6 +460,15 @@ function dyeBlend(from: number, to: number, amount: number, dye: number): FluidC
     g: start.g + (end.g - start.g) * t,
     b: start.b + (end.b - start.b) * t,
   }
+}
+
+/** The marked bottom-left square: 35px on a 381px-tall view, flush with the corner. */
+const PRESET_CORNER_SHARE = 35 / 381
+
+function inPresetCorner(x: number, y: number, width: number, height: number) {
+  if (width <= 0 || height <= 0) return false
+  const side = height * PRESET_CORNER_SHARE
+  return x >= 0 && x <= side && y >= height - side && y <= height
 }
 
 function clamp(value: number, min: number, max: number) {

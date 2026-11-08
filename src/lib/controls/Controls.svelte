@@ -2,6 +2,7 @@
   import { audio } from '../audio/session.svelte'
   import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramChoice, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
   import { colorListPresetIndex, colorListPresets } from '../presets/colorListPresets'
+  import { defaultPreset } from '../presets/defaultPreset'
   import { completeSymmetry, defaultSplatColors, driveSources, mirrorCounts, rotateCounts, splatColorMode, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type DriveSource, type Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
@@ -61,7 +62,7 @@
   ] as const
 
   const categories: { id: CategoryId; label: string; hint: string }[] = [
-    { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. Export copies its JSON.' },
+    { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. The arrow on a control restores just that value. Export copies its JSON.' },
     { id: 'left', label: 'Left', hint: 'Click runs once. Hold lasts while the left button is down. Either one can switch a setting between two values.' },
     { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down. Either one can switch a setting between two values.' },
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
@@ -243,6 +244,56 @@
     return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
   }
 
+  function sameValue(a: unknown, b: unknown): boolean {
+    if (Object.is(a, b)) return true
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((item, index) => sameValue(item, b[index]))
+    }
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      const left = a as Record<string, unknown>
+      const right = b as Record<string, unknown>
+      const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+      for (const key of keys) if (!sameValue(left[key], right[key])) return false
+      return true
+    }
+    return false
+  }
+
+  /** Value from the default preset when that slot uses the same action, otherwise the action's own default. */
+  function slotParamDefault(slot: ButtonSlot, kind: 'click' | 'hold', key: string, fallback: ParamValue): ParamValue {
+    const source = defaultPreset[slot]
+    const sourceId = kind === 'click' ? source.click : source.hold
+    const sourceParams = kind === 'click' ? source.clickParams : source.holdParams
+    const currentId = preset ? (kind === 'click' ? preset[slot].click : preset[slot].hold) : null
+    if (sourceId === currentId && sourceParams && Object.prototype.hasOwnProperty.call(sourceParams, key)) {
+      return structuredClone(sourceParams[key])
+    }
+    return structuredClone(fallback)
+  }
+
+  function beatParamDefault(key: string, fallback: ParamValue): ParamValue {
+    if (preset && defaultPreset.audio.beat === preset.audio.beat && Object.prototype.hasOwnProperty.call(defaultPreset.audio.beatParams, key)) {
+      return structuredClone(defaultPreset.audio.beatParams[key])
+    }
+    return structuredClone(fallback)
+  }
+
+  function resetClick(slot: ButtonSlot) {
+    if (!preset) return
+    const source = defaultPreset[slot]
+    setButton(slot, { ...preset[slot], click: source.click, clickParams: structuredClone(source.clickParams) })
+  }
+
+  function resetHold(slot: ButtonSlot) {
+    if (!preset) return
+    const source = defaultPreset[slot]
+    setButton(slot, { ...preset[slot], hold: source.hold, holdParams: structuredClone(source.holdParams) })
+  }
+
+  function resetBeat() {
+    setAudio({ beat: defaultPreset.audio.beat, beatParams: structuredClone(defaultPreset.audio.beatParams) })
+  }
+
   let exportLabel = $state('Export')
   let copyTimer = 0
 
@@ -289,6 +340,31 @@
   }
 </script>
 
+{#snippet resetButton(label: string, matches: boolean, onReset: () => void)}
+  <button
+    class="reset"
+    type="button"
+    aria-label={`Reset ${label} to the default preset`}
+    title={matches ? 'Matches the default preset' : 'Reset to the default preset'}
+    disabled={matches}
+    onclick={() => onReset()}
+  >
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M2.2 8a5.8 5.8 0 1 0 1.5-4" />
+      <path d="M2 2.4V6h3.6" />
+    </svg>
+  </button>
+{/snippet}
+
+{#snippet fieldEnd(label: string, readout: string | null, matches: boolean, onReset: () => void)}
+  <span class="field-end">
+    {#if readout}
+      <span class="readout">{readout}</span>
+    {/if}
+    {@render resetButton(label, matches, onReset)}
+  </span>
+{/snippet}
+
 {#snippet slider(
   label: string,
   value: number,
@@ -296,12 +372,19 @@
   max: number,
   step: number,
   onChange: (value: number) => void,
+  def: number | undefined = undefined,
 )}
-  <label class="field">
+  <div class="field">
     <span class="name">{label}</span>
-    <span class="readout">{formatControl(value, step)}</span>
+    <span class="field-end">
+      <span class="readout">{formatControl(value, step)}</span>
+      {#if def !== undefined}
+        {@render resetButton(label, value === def, () => onChange(def))}
+      {/if}
+    </span>
     <input
       type="range"
+      aria-label={label}
       {min}
       {max}
       {step}
@@ -309,24 +392,39 @@
       style:--fill="{(max === min ? 0 : ((value - min) / (max - min)) * 100)}%"
       oninput={(event) => onChange(Number(event.currentTarget.value))}
     />
-  </label>
+  </div>
 {/snippet}
 
 {#snippet toggle(label: string, key: BooleanSetting)}
-  <label class="check">
-    <input
-      type="checkbox"
-      checked={preset.settings[key]}
-      onchange={(event) => commitBoolean(key, event.currentTarget.checked)}
-    />
-    <span>{label}</span>
-  </label>
+  <div class="check-row">
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={preset.settings[key]}
+        onchange={(event) => commitBoolean(key, event.currentTarget.checked)}
+      />
+      <span>{label}</span>
+    </label>
+    {@render resetButton(label, preset.settings[key] === defaultPreset.settings[key], () => commitBoolean(key, defaultPreset.settings[key]))}
+  </div>
 {/snippet}
 
-{#snippet colorList(key: string, label: string, colors: number[], onChange: (next: number[]) => void)}
+{#snippet colorList(
+  key: string,
+  label: string,
+  colors: number[],
+  onChange: (next: number[]) => void,
+  defaults: number[] | undefined = undefined,
+)}
   {@const picked = colorListPresetIndex(colors)}
   <div class="colors">
-    <span class="name">{label}</span>
+    <div class="colors-head">
+      <span class="name">{label}</span>
+      {#if defaults}
+        {@const saved = defaults}
+        {@render resetButton(label, sameValue(colors, saved), () => onChange(saved.slice()))}
+      {/if}
+    </div>
     <label class="field palette">
       <span class="name">Palette</span>
       <select
@@ -401,42 +499,58 @@
   params: typeof clickActions[number]['params'],
   stored: Record<string, ParamValue>,
   setParam: (key: string, value: ParamValue) => void,
+  defaultFor: (key: string, fallback: ParamValue) => ParamValue,
 )}
   {#each params ?? [] as param (param.key)}
     {#if isColorListParam(param)}
-      {@render colorList(param.key, param.label, colorListValue(stored[param.key], param.default), (colors) => setParam(param.key, colors))}
+      {@const colors = colorListValue(stored[param.key], param.default)}
+      {@const fallback = defaultFor(param.key, param.default)}
+      {@const def = Array.isArray(fallback) ? fallback : param.default}
+      {@render colorList(param.key, param.label, colors, (next) => setParam(param.key, next), def)}
     {:else if isColorParam(param)}
-      <label class="field color">
+      {@const current = storedNumber(stored[param.key], param.default)}
+      {@const fallback = defaultFor(param.key, param.default)}
+      {@const def = typeof fallback === 'number' ? fallback : param.default}
+      <div class="field color">
         <span class="name">{param.label}</span>
         <input
           type="color"
-          value={colorParamToHex(storedNumber(stored[param.key], param.default))}
+          aria-label={param.label}
+          value={colorParamToHex(current)}
           oninput={(event) => setParam(param.key, hexToColorParam(event.currentTarget.value))}
         />
-      </label>
+        {@render resetButton(param.label, current === def, () => setParam(param.key, def))}
+      </div>
     {:else if isSettingParam(param)}
       {@const chosen = paramSetting(stored, param.key, param.default)}
-      <label class="field">
+      {@const fallback = defaultFor(param.key, param.default)}
+      {@const def = paramSetting(typeof fallback === 'string' ? { [param.key]: fallback } : {}, param.key, param.default)}
+      <div class="field">
         <span class="name">{param.label}</span>
-        <span class="readout">{formatControl(preset.settings[chosen], controlFor(chosen).step)}</span>
-        <select value={chosen} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
+        {@render fieldEnd(param.label, formatControl(preset.settings[chosen], controlFor(chosen).step), chosen === def, () => setParam(param.key, def))}
+        <select aria-label={param.label} value={chosen} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
           {#each properties as control (control.key)}
             <option value={control.key}>{control.label}</option>
           {/each}
         </select>
-      </label>
+      </div>
     {:else if isChoiceParam(param)}
       {@const selected = paramChoice(stored, param.key, param.options, param.default)}
-      <label class="field">
+      {@const fallback = defaultFor(param.key, param.default)}
+      {@const def = paramChoice(typeof fallback === 'string' ? { [param.key]: fallback } : {}, param.key, param.options, param.default)}
+      <div class="field">
         <span class="name">{param.label}</span>
-        <select value={selected} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
+        {@render fieldEnd(param.label, null, selected === def, () => setParam(param.key, def))}
+        <select aria-label={param.label} value={selected} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
           {#each param.options as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>
-      </label>
+      </div>
     {:else if isNumberParam(param)}
       {@const range = rangeFor(param, stored)}
+      {@const fallback = defaultFor(param.key, param.default)}
+      {@const def = typeof fallback === 'number' ? fallback : param.default}
       {@render slider(
         param.label,
         storedNumber(stored[param.key], param.default),
@@ -444,6 +558,7 @@
         range.max,
         range.step,
         (value) => setParam(param.key, value),
+        def,
       )}
     {/if}
   {/each}
@@ -452,19 +567,21 @@
   {@const binding = preset[slot]}
   {@const click = clickAction(binding.click)}
   {@const hold = holdAction(binding.hold)}
+  {@const source = defaultPreset[slot]}
   <div class="group">
-    <label class="field">
+    <div class="field">
       <span class="name">Click</span>
-      <select value={binding.click ?? ''} onchange={(event) => chooseClick(slot, event.currentTarget.value)}>
+      {@render fieldEnd('Click', null, binding.click === source.click, () => resetClick(slot))}
+      <select aria-label="Click" value={binding.click ?? ''} onchange={(event) => chooseClick(slot, event.currentTarget.value)}>
         <option value="">None</option>
         {#each clickActions as action (action.id)}
           <option value={action.id}>{action.label}</option>
         {/each}
       </select>
-    </label>
+    </div>
     {#if click && (click.params?.length || click.note)}
       <div class="group-body">
-        {@render actionParams(click.params, binding.clickParams, (key, value) => setClickParam(slot, key, value))}
+        {@render actionParams(click.params, binding.clickParams, (key, value) => setClickParam(slot, key, value), (key, fallback) => slotParamDefault(slot, 'click', key, fallback))}
         {#if click.note}
           <p class="note aside">{click.note}</p>
         {/if}
@@ -472,18 +589,19 @@
     {/if}
   </div>
   <div class="group">
-    <label class="field">
+    <div class="field">
       <span class="name">Hold</span>
-      <select value={binding.hold ?? ''} onchange={(event) => chooseHold(slot, event.currentTarget.value)}>
+      {@render fieldEnd('Hold', null, binding.hold === source.hold, () => resetHold(slot))}
+      <select aria-label="Hold" value={binding.hold ?? ''} onchange={(event) => chooseHold(slot, event.currentTarget.value)}>
         <option value="">None</option>
         {#each holdActions as action (action.id)}
           <option value={action.id}>{action.label}</option>
         {/each}
       </select>
-    </label>
+    </div>
     {#if hold && (hold.params?.length || hold.note)}
       <div class="group-body">
-        {@render actionParams(hold.params, binding.holdParams, (key, value) => setHoldParam(slot, key, value))}
+        {@render actionParams(hold.params, binding.holdParams, (key, value) => setHoldParam(slot, key, value), (key, fallback) => slotParamDefault(slot, 'hold', key, fallback))}
         {#if hold.note}
           <p class="note aside">{hold.note}</p>
         {/if}
@@ -495,23 +613,28 @@
 
 {#snippet axisFields(axis: 'x' | 'y', label: string, note: string)}
   {@const map = preset.cursor[axis]}
+  {@const source = defaultPreset.cursor[axis]}
   {@const range = controlFor(map.setting)}
   <div class="group">
-    <label class="check">
-      <input
-        type="checkbox"
-        checked={map.enabled}
-        onchange={(event) => setCursor(axis, { enabled: event.currentTarget.checked })}
-      />
-      <span>{label}</span>
-    </label>
+    <div class="check-row">
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={map.enabled}
+          onchange={(event) => setCursor(axis, { enabled: event.currentTarget.checked })}
+        />
+        <span>{label}</span>
+      </label>
+      {@render resetButton(label, map.enabled === source.enabled, () => setCursor(axis, { enabled: source.enabled }))}
+    </div>
     {#if map.enabled}
       <div class="group-body">
         <p class="note aside">{note}</p>
-        <label class="field">
+        <div class="field">
           <span class="name">Adjusts</span>
-          <span class="readout">{formatControl(preset.settings[map.setting], range.step)}</span>
+          {@render fieldEnd('Adjusts', formatControl(preset.settings[map.setting], range.step), map.setting === source.setting, () => setCursor(axis, { setting: source.setting }))}
           <select
+            aria-label="Adjusts"
             value={map.setting}
             onchange={(event) => chooseAxis(axis, event.currentTarget.value as PresetNumberSetting)}
           >
@@ -519,9 +642,9 @@
               <option value={control.key}>{control.label}</option>
             {/each}
           </select>
-        </label>
-        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setCursor(axis, { min: value }))}
-        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setCursor(axis, { max: value }))}
+        </div>
+        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setCursor(axis, { min: value }), source.min)}
+        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setCursor(axis, { max: value }), source.max)}
       </div>
     {/if}
   </div>
@@ -529,23 +652,28 @@
 
 {#snippet bandFields(band: AudioBand, label: string, note: string)}
   {@const map = preset.audio[band]}
+  {@const source = defaultPreset.audio[band]}
   {@const range = controlFor(map.setting)}
   <div class="group">
-    <label class="check">
-      <input
-        type="checkbox"
-        checked={map.enabled}
-        onchange={(event) => setAudioBand(band, { enabled: event.currentTarget.checked })}
-      />
-      <span>{label}</span>
-    </label>
+    <div class="check-row">
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={map.enabled}
+          onchange={(event) => setAudioBand(band, { enabled: event.currentTarget.checked })}
+        />
+        <span>{label}</span>
+      </label>
+      {@render resetButton(label, map.enabled === source.enabled, () => setAudioBand(band, { enabled: source.enabled }))}
+    </div>
     {#if map.enabled}
       <div class="group-body">
         <p class="note aside">{note}</p>
-        <label class="field">
+        <div class="field">
           <span class="name">Adjusts</span>
-          <span class="readout">{formatControl(liveBand(band), range.step)}</span>
+          {@render fieldEnd('Adjusts', formatControl(liveBand(band), range.step), map.setting === source.setting, () => setAudioBand(band, { setting: source.setting }))}
           <select
+            aria-label="Adjusts"
             value={map.setting}
             onchange={(event) => chooseBand(band, event.currentTarget.value as PresetNumberSetting)}
           >
@@ -553,9 +681,9 @@
               <option value={control.key}>{control.label}</option>
             {/each}
           </select>
-        </label>
-        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setAudioBand(band, { min: value }))}
-        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setAudioBand(band, { max: value }))}
+        </div>
+        {@render slider('Minimum', map.min, range.min, range.max, range.step, (value) => setAudioBand(band, { min: value }), source.min)}
+        {@render slider('Maximum', map.max, range.min, range.max, range.step, (value) => setAudioBand(band, { max: value }), source.max)}
       </div>
     {/if}
   </div>
@@ -656,10 +784,16 @@
           {@render buttonFields(buttonSlot)}
         {:else if category === 'scroll'}
           <div class="group">
-            <label class="field">
+            <div class="field">
               <span class="name">Adjusts</span>
-              <span class="readout">{formatControl(preset.settings[preset.scroll.setting], scrollRange.step)}</span>
+              {@render fieldEnd(
+                'Adjusts',
+                formatControl(preset.settings[preset.scroll.setting], scrollRange.step),
+                preset.scroll.setting === defaultPreset.scroll.setting,
+                () => setScroll({ setting: defaultPreset.scroll.setting }),
+              )}
               <select
+                aria-label="Adjusts"
                 value={preset.scroll.setting}
                 onchange={(event) => chooseScroll(event.currentTarget.value as PresetNumberSetting)}
               >
@@ -667,7 +801,7 @@
                   <option value={control.key}>{control.label}</option>
                 {/each}
               </select>
-            </label>
+            </div>
             <div class="group-body">
               {@render slider(
                 'Sensitivity',
@@ -676,23 +810,38 @@
                 Math.max(scrollRange.step, scrollRange.max - scrollRange.min),
                 scrollRange.step,
                 (value) => setScroll({ sensitivity: value }),
+                defaultPreset.scroll.sensitivity,
               )}
               {#if preset.scroll.setting === 'DELTA_TIME'}
                 <p class="note aside">0.016 is normal speed. Higher runs the simulation faster, lower runs it slower.</p>
               {/if}
-              {@render slider('Minimum', preset.scroll.min, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
-                setScroll({ min: value }),
+              {@render slider(
+                'Minimum',
+                preset.scroll.min,
+                scrollRange.min,
+                scrollRange.max,
+                scrollRange.step,
+                (value) => setScroll({ min: value }),
+                defaultPreset.scroll.min,
               )}
-              {@render slider('Maximum', preset.scroll.max, scrollRange.min, scrollRange.max, scrollRange.step, (value) =>
-                setScroll({ max: value }),
+              {@render slider(
+                'Maximum',
+                preset.scroll.max,
+                scrollRange.min,
+                scrollRange.max,
+                scrollRange.step,
+                (value) => setScroll({ max: value }),
+                defaultPreset.scroll.max,
               )}
             </div>
           </div>
         {:else if category === 'cursor'}
           <div class="group">
-            <label class="field">
+            <div class="field">
               <span class="name">Paint</span>
+              {@render fieldEnd('Paint', null, preset.splat.paint === defaultPreset.splat.paint, () => setSplat({ paint: defaultPreset.splat.paint }))}
               <select
+                aria-label="Paint"
                 value={preset.splat.paint}
                 onchange={(event) => {
                   const paint = event.currentTarget.value
@@ -703,17 +852,30 @@
                 <option value="left">While the left button is dragged</option>
                 <option value="right">While the right button is dragged</option>
               </select>
-            </label>
+            </div>
             <div class="group-body">
               <p class="note aside">
                 Left and Right paint while that button is held. Set the button itself to None unless you also want a click or hold effect.
               </p>
-              {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }))}
-              {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }))}
-              {@render colorList('cursor-colors', 'Colors', preset.splat.colors ?? defaultSplatColors, (colors) => setSplat({ colors }))}
-              <label class="field">
+              {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }), defaultPreset.splat.force)}
+              {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }), defaultPreset.splat.dye)}
+              {@render colorList(
+                'cursor-colors',
+                'Colors',
+                preset.splat.colors ?? defaultSplatColors,
+                (colors) => setSplat({ colors }),
+                defaultPreset.splat.colors,
+              )}
+              <div class="field">
                 <span class="name">Color change</span>
+                {@render fieldEnd(
+                  'Color change',
+                  null,
+                  splatColorMode(preset.splat) === splatColorMode(defaultPreset.splat),
+                  () => setSplat({ colorMode: splatColorMode(defaultPreset.splat) }),
+                )}
                 <select
+                  aria-label="Color change"
                   value={splatColorMode(preset.splat)}
                   onchange={(event) => {
                     const next = event.currentTarget.value
@@ -723,9 +885,17 @@
                   <option value="click">On click</option>
                   <option value="cycle">Cycle</option>
                 </select>
-              </label>
+              </div>
               {#if splatColorMode(preset.splat) === 'cycle'}
-                {@render slider('Seconds', preset.splat.cycleSeconds ?? 8, 0.4, 40, 0.1, (value) => setSplat({ cycleSeconds: value }))}
+                {@render slider(
+                  'Seconds',
+                  preset.splat.cycleSeconds ?? 8,
+                  0.4,
+                  40,
+                  0.1,
+                  (value) => setSplat({ cycleSeconds: value }),
+                  defaultPreset.splat.cycleSeconds,
+                )}
                 <p class="note aside">One pass through the list. The color eases from each one into the next.</p>
               {:else if preset.splat.paint === 'always'}
                 <p class="note aside">The cursor paints without a button, so this stays on the current color. Cycle moves through the list on its own.</p>
@@ -735,17 +905,27 @@
                 </p>
               {/if}
               {#each properties.filter((control) => control.group === 'Splat') as control (control.key)}
-                {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-                  commitNumber(control.key, value),
+                {@render slider(
+                  control.label,
+                  preset.settings[control.key],
+                  control.min,
+                  control.max,
+                  control.step,
+                  (value) => commitNumber(control.key, value),
+                  defaultPreset.settings[control.key],
                 )}
               {/each}
             </div>
           </div>
           {@const symmetry = completeSymmetry(preset.cursor.symmetry)}
           <div class="group">
-            <label class="field">
+            <div class="field">
               <span class="name">Symmetry</span>
+              {@render fieldEnd('Symmetry', null, symmetry.kind === defaultPreset.cursor.symmetry.kind, () =>
+                setSymmetry({ kind: defaultPreset.cursor.symmetry.kind }),
+              )}
               <select
+                aria-label="Symmetry"
                 value={symmetry.kind}
                 onchange={(event) => {
                   const kind = event.currentTarget.value
@@ -756,7 +936,7 @@
                 <option value="mirror">Mirror</option>
                 <option value="rotate">Rotate</option>
               </select>
-            </label>
+            </div>
             {#if symmetry.kind !== 'off'}
               <div class="group-body">
                 <p class="note aside">
@@ -767,17 +947,22 @@
                   {/if}
                   The copy follows the movement and paints only while this cursor is painting.
                 </p>
-                <div class="source-switch count-switch" role="group" aria-label="How many copies">
-                  {#each (symmetry.kind === 'mirror' ? mirrorCounts : rotateCounts) as count (count)}
-                    <button
-                      type="button"
-                      class:on={symmetry.count === count}
-                      aria-pressed={symmetry.count === count}
-                      onclick={() => setSymmetry({ count })}
-                    >
-                      ×{count}
-                    </button>
-                  {/each}
+                <div class="with-reset">
+                  <div class="source-switch count-switch" role="group" aria-label="How many copies">
+                    {#each (symmetry.kind === 'mirror' ? mirrorCounts : rotateCounts) as count (count)}
+                      <button
+                        type="button"
+                        class:on={symmetry.count === count}
+                        aria-pressed={symmetry.count === count}
+                        onclick={() => setSymmetry({ count })}
+                      >
+                        ×{count}
+                      </button>
+                    {/each}
+                  </div>
+                  {@render resetButton('Copies', symmetry.count === defaultPreset.cursor.symmetry.count, () =>
+                    setSymmetry({ count: defaultPreset.cursor.symmetry.count }),
+                  )}
                 </div>
               </div>
             {/if}
@@ -838,66 +1023,112 @@
                 </div>
               </div>
             {/if}
-            {@render slider('Gain', preset.audio.gain, 0, 4, 0.05, (value) => setAudio({ gain: value }))}
-            {@render slider('Noise floor', preset.audio.floor, 0, 0.4, 0.01, (value) => setAudio({ floor: value }))}
+            {@render slider('Gain', preset.audio.gain, 0, 4, 0.05, (value) => setAudio({ gain: value }), defaultPreset.audio.gain)}
+            {@render slider('Noise floor', preset.audio.floor, 0, 0.4, 0.01, (value) => setAudio({ floor: value }), defaultPreset.audio.floor)}
             <p class="note aside">Gain lifts a quiet source. Raise the noise floor if a quiet room still counts as sound.</p>
           </div>
           <div class="group">
-            <label class="field">
+            <div class="field">
               <span class="name">On beat</span>
-              <select value={preset.audio.beat ?? ''} onchange={(event) => chooseBeat(event.currentTarget.value)}>
+              {@render fieldEnd('On beat', null, preset.audio.beat === defaultPreset.audio.beat, resetBeat)}
+              <select aria-label="On beat" value={preset.audio.beat ?? ''} onchange={(event) => chooseBeat(event.currentTarget.value)}>
                 <option value="">None</option>
                 {#each clickActions as action (action.id)}
                   <option value={action.id}>{action.label}</option>
                 {/each}
               </select>
-            </label>
+            </div>
             {#if beat && (beat.params?.length || beat.note)}
               <div class="group-body">
-                {@render actionParams(beat.params, preset.audio.beatParams, setBeatParam)}
+                {@render actionParams(beat.params, preset.audio.beatParams, setBeatParam, beatParamDefault)}
                 {#if beat.note}
                   <p class="note aside">{beat.note}</p>
                 {/if}
               </div>
             {/if}
-            {@render slider('Sensitivity', preset.audio.beatSensitivity, 0, 1, 0.01, (value) => setAudio({ beatSensitivity: value }))}
-            {@render slider('Gap', preset.audio.beatCooldown, 0.05, 1, 0.01, (value) => setAudio({ beatCooldown: value }))}
+            {@render slider(
+              'Sensitivity',
+              preset.audio.beatSensitivity,
+              0,
+              1,
+              0.01,
+              (value) => setAudio({ beatSensitivity: value }),
+              defaultPreset.audio.beatSensitivity,
+            )}
+            {@render slider(
+              'Gap',
+              preset.audio.beatCooldown,
+              0.05,
+              1,
+              0.01,
+              (value) => setAudio({ beatCooldown: value }),
+              defaultPreset.audio.beatCooldown,
+            )}
             <p class="note aside">The beat follows the kick, the same 60 Hz band the desktop engine uses. Higher sensitivity catches quieter hits. Gap is the shortest pause between hits.</p>
           </div>
           <div class="group">
-            <label class="check">
-              <input
-                type="checkbox"
-                checked={preset.audio.drive.enabled}
-                onchange={(event) => setAudioDrive({ enabled: event.currentTarget.checked })}
-              />
-              <span>Paint with the sound</span>
-            </label>
+            <div class="check-row">
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={preset.audio.drive.enabled}
+                  onchange={(event) => setAudioDrive({ enabled: event.currentTarget.checked })}
+                />
+                <span>Paint with the sound</span>
+              </label>
+              {@render resetButton('Paint with the sound', preset.audio.drive.enabled === defaultPreset.audio.drive.enabled, () =>
+                setAudioDrive({ enabled: defaultPreset.audio.drive.enabled }),
+              )}
+            </div>
             {#if preset.audio.drive.enabled}
               {@const driveSource = driveSources.find((item) => item.id === preset.audio.drive.source) ?? driveSources[0]}
               <div class="group-body">
-                <label class="field">
+                <div class="field">
                   <span class="name">Follows</span>
-                  <select value={driveSource.id} onchange={(event) => chooseDrive(event.currentTarget.value)}>
+                  {@render fieldEnd('Follows', null, driveSource.id === defaultPreset.audio.drive.source, () =>
+                    setAudioDrive({ source: defaultPreset.audio.drive.source }),
+                  )}
+                  <select aria-label="Follows" value={driveSource.id} onchange={(event) => chooseDrive(event.currentTarget.value)}>
                     {#each driveSources as item (item.id)}
                       <option value={item.id}>{item.label}</option>
                     {/each}
                   </select>
-                </label>
+                </div>
                 <p class="note aside">{driveSource.note} It keeps going while this panel is hidden.</p>
-                {@render slider('Force', preset.audio.drive.force, 0, 30, 0.1, (value) => setAudioDrive({ force: value }))}
-                {@render slider('Dye', preset.audio.drive.dye, 0, 4, 0.05, (value) => setAudioDrive({ dye: value }))}
+                {@render slider(
+                  'Force',
+                  preset.audio.drive.force,
+                  0,
+                  30,
+                  0.1,
+                  (value) => setAudioDrive({ force: value }),
+                  defaultPreset.audio.drive.force,
+                )}
+                {@render slider(
+                  'Dye',
+                  preset.audio.drive.dye,
+                  0,
+                  4,
+                  0.05,
+                  (value) => setAudioDrive({ dye: value }),
+                  defaultPreset.audio.drive.dye,
+                )}
               </div>
             {/if}
           </div>
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={preset.audio.colorFromPitch}
-              onchange={(event) => setAudio({ colorFromPitch: event.currentTarget.checked })}
-            />
-            <span>Color follows pitch</span>
-          </label>
+          <div class="check-row">
+            <label class="check">
+              <input
+                type="checkbox"
+                checked={preset.audio.colorFromPitch}
+                onchange={(event) => setAudio({ colorFromPitch: event.currentTarget.checked })}
+              />
+              <span>Color follows pitch</span>
+            </label>
+            {@render resetButton('Color follows pitch', preset.audio.colorFromPitch === defaultPreset.audio.colorFromPitch, () =>
+              setAudio({ colorFromPitch: defaultPreset.audio.colorFromPitch }),
+            )}
+          </div>
           <p class="note aside">Low notes stay toward red and higher notes climb the rainbow. Uses the dye amount from Cursor.</p>
           {@render bandFields('level', 'Map loudness', 'Overall volume. Quiet uses the minimum, loud uses the maximum.')}
           {@render bandFields('bass', 'Map bass', 'Kick and bass. Quiet uses the minimum, loud uses the maximum.')}
@@ -905,8 +1136,14 @@
           {@render bandFields('treble', 'Map highs', 'Cymbals and brightness. Quiet uses the minimum, loud uses the maximum.')}
         {:else if numberGroup}
           {#each properties.filter((control) => control.group === numberGroup) as control (control.key)}
-            {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-              commitNumber(control.key, value),
+            {@render slider(
+              control.label,
+              preset.settings[control.key],
+              control.min,
+              control.max,
+              control.step,
+              (value) => commitNumber(control.key, value),
+              defaultPreset.settings[control.key],
             )}
           {/each}
         {:else if category === 'general'}
@@ -914,8 +1151,14 @@
             {@render toggle('Bloom', 'BLOOM')}
             <div class="group-body">
               {#each properties.filter((control) => control.group === 'Bloom') as control (control.key)}
-                {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
-                  commitNumber(control.key, value),
+                {@render slider(
+                  control.label,
+                  preset.settings[control.key],
+                  control.min,
+                  control.max,
+                  control.step,
+                  (value) => commitNumber(control.key, value),
+                  defaultPreset.settings[control.key],
                 )}
               {/each}
             </div>
@@ -923,14 +1166,18 @@
           {@render toggle('Shading', 'SHADING')}
           {@render toggle('Paused', 'PAUSED')}
           {@render toggle('Transparent', 'TRANSPARENT')}
-          <label class="field color">
+          <div class="field color">
             <span class="name">Background</span>
             <input
               type="color"
+              aria-label="Background"
               value={toHex(preset.settings.BACK_COLOR)}
               oninput={(event) => commitColor(fromHex(event.currentTarget.value))}
             />
-          </label>
+            {@render resetButton('Background', sameValue(preset.settings.BACK_COLOR, defaultPreset.settings.BACK_COLOR), () =>
+              commitColor({ ...defaultPreset.settings.BACK_COLOR }),
+            )}
+          </div>
         {/if}
       </div>
     </section>
@@ -1199,7 +1446,7 @@
   }
 
   .group > .field,
-  .group > .check {
+  .group > .check-row {
     margin-bottom: 0.7rem;
   }
 
@@ -1211,7 +1458,9 @@
 
   .group .field,
   .group .check,
+  .group .check-row,
   .group .colors,
+  .group .with-reset,
   .group-body .note {
     max-width: none;
   }
@@ -1226,10 +1475,58 @@
 
   .field {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 0.15rem 0.75rem;
     max-width: 32rem;
     margin: 0 0 0.85rem;
+  }
+
+  .field-end {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    min-height: 22px;
+  }
+
+  .reset {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #8e99ad;
+    cursor: pointer;
+  }
+
+  .reset:hover:not(:disabled) {
+    color: var(--mint);
+    background: rgba(62, 224, 176, 0.12);
+  }
+
+  .reset:disabled {
+    opacity: 0.42;
+    cursor: default;
+  }
+
+  .reset svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .reset:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 2px;
   }
 
   .name {
@@ -1319,8 +1616,37 @@
     margin: 0 0 0.85rem;
   }
 
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 32rem;
+    margin: 0 0 0.85rem;
+  }
+
+  .check-row .check {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .with-reset {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    max-width: 32rem;
+  }
+
+  .with-reset .reset {
+    margin-left: auto;
+  }
+
   .check input {
     accent-color: var(--mint);
+  }
+
+  .field.color {
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .color input {
@@ -1487,6 +1813,13 @@
   .colors {
     max-width: 32rem;
     margin: 0 0 0.85rem;
+  }
+
+  .colors-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
 
   .colors .palette {

@@ -15,6 +15,8 @@ export type PointerMove = {
 /** Wheel change in notches. A typical mouse notch is 1; trackpads send fractions. */
 export type WheelDelta = {
   notches: number
+  x: number
+  y: number
 }
 
 const NONE: HeldButtons = { left: false, right: false, middle: false }
@@ -115,8 +117,13 @@ export function watchPointer(
 
   function onWheel(event: WheelEvent) {
     event.preventDefault()
+    const rect = canvas.getBoundingClientRect()
     const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 1 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 16 : 100
-    listener.onWheel?.({ notches: event.deltaY / unit })
+    listener.onWheel?.({
+      notches: event.deltaY / unit,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    })
   }
 
   function onMiddleMouseDown(event: MouseEvent) {

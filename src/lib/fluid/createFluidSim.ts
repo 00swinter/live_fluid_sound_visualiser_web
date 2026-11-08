@@ -47,6 +47,10 @@ export type FluidBooleanSetting = 'SHADING' | 'COLORFUL' | 'PAUSED' | 'BLOOM' | 
 export type FluidSim = {
   /** Inject dye and velocity. `x` and `y` are canvas pixels from the top left. */
   splat: (x: number, y: number, dx: number, dy: number, color: FluidColor) => void
+  /** Add dye from an image. The velocity field is left alone. `x` and `y` are canvas pixels from the top left. */
+  stampInk: (source: CanvasImageSource, x: number, y: number, width: number, height: number, color: FluidColor) => void
+  /** Set dye and velocity to zero inside a rectangle. `x` and `y` are canvas pixels from the top left. */
+  clearPatch: (x: number, y: number, width: number, height: number) => void
   /** Wipe dye and velocity so the frame goes back to the background. */
   clear: () => void
   set: {
@@ -420,6 +424,49 @@ export function createFluidSim(canvas: HTMLCanvasElement): FluidSim {
   `,
   )
 
+  const inkShader = compileShader(
+    gl.FRAGMENT_SHADER,
+    `
+    precision highp float;
+    precision highp sampler2D;
+
+    varying vec2 vUv;
+    uniform sampler2D uTarget;
+    uniform sampler2D uInk;
+    uniform vec2 uOrigin;
+    uniform vec2 uSize;
+    uniform vec3 uColor;
+
+    void main () {
+        vec3 base = texture2D(uTarget, vUv).xyz;
+        vec2 local = (vUv - uOrigin) / uSize;
+        float inside = step(0.0, local.x) * step(local.x, 1.0) * step(0.0, local.y) * step(local.y, 1.0);
+        float ink = texture2D(uInk, clamp(local, 0.0, 1.0)).a * inside;
+        gl_FragColor = vec4(base + uColor * ink, 1.0);
+    }
+  `,
+  )
+
+  const eraseShader = compileShader(
+    gl.FRAGMENT_SHADER,
+    `
+    precision highp float;
+    precision highp sampler2D;
+
+    varying vec2 vUv;
+    uniform sampler2D uTarget;
+    uniform vec2 uOrigin;
+    uniform vec2 uSize;
+
+    void main () {
+        vec4 base = texture2D(uTarget, vUv);
+        vec2 local = (vUv - uOrigin) / uSize;
+        float inside = step(0.0, local.x) * step(local.x, 1.0) * step(0.0, local.y) * step(local.y, 1.0);
+        gl_FragColor = base * (1.0 - inside);
+    }
+  `,
+  )
+
   const advectionManualFilteringShader = compileShader(
     gl.FRAGMENT_SHADER,
     `
@@ -660,6 +707,15 @@ export function createFluidSim(canvas: HTMLCanvasElement): FluidSim {
   const bloomBlurProgram = new GLProgram(baseVertexShader, bloomBlurShader)
   const bloomFinalProgram = new GLProgram(baseVertexShader, bloomFinalShader)
   const splatProgram = new GLProgram(baseVertexShader, splatShader)
+  const inkProgram = new GLProgram(baseVertexShader, inkShader)
+  const eraseProgram = new GLProgram(baseVertexShader, eraseShader)
+  const inkTexture = gl.createTexture()!
+  gl.bindTexture(gl.TEXTURE_2D, inkTexture)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]))
   const advectionProgram = new GLProgram(
     baseVertexShader,
     ext.supportLinearFiltering ? advectionShader : advectionManualFilteringShader,
@@ -1037,6 +1093,46 @@ export function createFluidSim(canvas: HTMLCanvasElement): FluidSim {
     density.swap()
   }
 
+  function stampInk(source: CanvasImageSource, x: number, y: number, width: number, height: number, color: FluidColor) {
+    if (!density || width < 1 || height < 1 || canvas.width < 2 || canvas.height < 2) return
+
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, inkTexture)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+
+    gl.disable(gl.BLEND)
+    inkProgram.bind()
+    gl.viewport(0, 0, dyeWidth, dyeHeight)
+    gl.uniform1i(inkProgram.uniforms.uTarget, density.read.attach(0))
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, inkTexture)
+    gl.uniform1i(inkProgram.uniforms.uInk, 1)
+    gl.uniform2f(inkProgram.uniforms.uOrigin, x / canvas.width, 1 - (y + height) / canvas.height)
+    gl.uniform2f(inkProgram.uniforms.uSize, width / canvas.width, height / canvas.height)
+    gl.uniform3f(inkProgram.uniforms.uColor, color.r, color.g, color.b)
+    blit(density.write.fbo)
+    density.swap()
+  }
+
+  function eraseField(field: DoubleFBO, viewWidth: number, viewHeight: number, x: number, y: number, width: number, height: number) {
+    gl.disable(gl.BLEND)
+    eraseProgram.bind()
+    gl.viewport(0, 0, viewWidth, viewHeight)
+    gl.uniform1i(eraseProgram.uniforms.uTarget, field.read.attach(0))
+    gl.uniform2f(eraseProgram.uniforms.uOrigin, x / canvas.width, 1 - (y + height) / canvas.height)
+    gl.uniform2f(eraseProgram.uniforms.uSize, width / canvas.width, height / canvas.height)
+    blit(field.write.fbo)
+    field.swap()
+  }
+
+  function clearPatch(x: number, y: number, width: number, height: number) {
+    if (!velocity || !density || width < 1 || height < 1 || canvas.width < 2 || canvas.height < 2) return
+    eraseField(velocity, simWidth, simHeight, x, y, width, height)
+    eraseField(density, dyeWidth, dyeHeight, x, y, width, height)
+  }
+
   function clear() {
     if (!velocity || !density) return
     gl.clearColor(0, 0, 0, 0)
@@ -1106,7 +1202,7 @@ export function createFluidSim(canvas: HTMLCanvasElement): FluidSim {
   resizeCanvas()
   raf = requestAnimationFrame(frame)
 
-  return { splat, set, clear, destroy }
+  return { splat, stampInk, clearPatch, set, clear, destroy }
 }
 
 function isMobile() {

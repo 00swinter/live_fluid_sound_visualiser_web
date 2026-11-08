@@ -3,6 +3,7 @@
   import Controls from './lib/controls/Controls.svelte'
   import { createFluidSim, type FluidBooleanSetting, type FluidColor, type FluidSim } from './lib/fluid/createFluidSim'
   import { playPreset } from './lib/performance/playPreset'
+  import { stampPresetName } from './lib/performance/presetName'
   import { defaultPreset } from './lib/presets/defaultPreset'
 import { loadPerformance, loadPresetLibrary, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
 import { applySettings, completeSymmetry, defaultAudio, type AudioBand, type AudioMap, type AxisMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type Preset } from './lib/presets/types'
@@ -114,11 +115,26 @@ import type { PresetNumberSetting } from './lib/behaviors'
     return type !== 'range' && type !== 'checkbox' && type !== 'radio' && type !== 'color'
   }
 
+  function revealPreset(name: string) {
+    if (!sim || !canvas) return
+    stampPresetName(sim, canvas, name)
+  }
+
   function selectPreset(id: string) {
     if (id === activeId) return
     activeId = id
     const next = presets.find((item) => item.id === id)
-    if (next && sim) applySettings(sim, next.settings)
+    if (!next) return
+    if (sim) applySettings(sim, next.settings)
+    revealPreset(next.name)
+  }
+
+  function stepPreset(direction: 1 | -1) {
+    const count = presets.length
+    if (count < 2) return
+    const index = presets.findIndex((item) => item.id === activeId)
+    const from = index < 0 ? 0 : index
+    selectPreset(presets[(from + direction + count) % count].id)
   }
 
   function addPreset() {
@@ -128,6 +144,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     presets.push(copy)
     activeId = copy.id
     if (sim) applySettings(sim, copy.settings)
+    revealPreset(copy.name)
   }
 
   function duplicatePreset() {
@@ -135,6 +152,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     const copy = clonePreset(source, copyName(source.name.trim() || 'Preset'))
     presets.push(copy)
     activeId = copy.id
+    revealPreset(copy.name)
   }
 
   function resetPreset() {
@@ -156,6 +174,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     const next = presets[Math.max(0, index - 1)]
     activeId = next.id
     if (sim) applySettings(sim, next.settings)
+    revealPreset(next.name)
   }
 
   function clonePreset(source: Preset, name: string) {
@@ -183,7 +202,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     sim = fluid
     fluid.set('SIM_RESOLUTION', performance.SIM_RESOLUTION)
     fluid.set('DYE_RESOLUTION', performance.DYE_RESOLUTION)
-    const stopPreset = playPreset(canvas, fluid, livePreset)
+    const stopPreset = playPreset(canvas, fluid, livePreset, stepPreset)
 
     function onKey(event: KeyboardEvent) {
       if (event.repeat || (event.key !== 't' && event.key !== 'T')) return
