@@ -1,21 +1,24 @@
 import { audio, type AudioListenOptions } from '../audio/session.svelte'
 import type { AudioFrame } from '../audio/analyze'
-import type { FluidSim } from '../fluid/createFluidSim'
-import { actionParams, clickAction, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
+import type { FluidColor, FluidSim } from '../fluid/createFluidSim'
+import { actionParams, clickAction, dyeFromColor, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
 import { watchPointer } from '../input/pointerInput'
-import { applySettings, defaultAudio, type AudioMap, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
+import { applySettings, defaultAudio, defaultSplatColors, splatColorMode, type AudioMap, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
-const COLOR_INTERVAL_MS = 100
 
 /** Movement can paint and map screen position. Buttons and the wheel read the active preset. */
 export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: () => Preset): () => void {
   applySettings(sim, getPreset().settings)
 
   let held: HeldButtons = { left: false, right: false, middle: false }
-  let hue = Math.random()
-  let colorAt = 0
+  let colorIndex = 0
+  let colorArmed = false
+  let colorPreset = ''
+  let cyclePhase = 0
+  let cycleAt = 0
+  let seenColorMode: '' | 'click' | 'cycle' = ''
   let transitions: ActiveTransition[] = []
   let transitionPreset = ''
   let frame = 0
@@ -44,6 +47,8 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
     },
     onButtons(next, point) {
       const preset = getPreset()
+      const mode = noteColorMode(preset)
+      if (mode === 'click' && paintPressed(preset, held, next)) stepClickColor(listedColors(preset).length)
       const ctx = actionContext(point)
       for (const slot of SLOTS) {
         const binding = preset[slot]
@@ -91,13 +96,60 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
 
   function currentColor() {
     const preset = getPreset()
+    noteColorMode(preset)
     if (preset.audio?.colorFromPitch && audio.source !== 'off') return splatColor(preset.splat.dye, pitch)
-    const now = performance.now()
-    if (preset.splat.colorful && now - colorAt >= COLOR_INTERVAL_MS) {
-      hue = Math.random()
-      colorAt = now
+    return paletteColor(preset)
+  }
+
+  function noteColorMode(preset: Preset) {
+    if (preset.id !== colorPreset) {
+      colorPreset = preset.id
+      colorIndex = 0
+      colorArmed = false
+      cyclePhase = 0
+      cycleAt = 0
+      seenColorMode = ''
     }
-    return splatColor(preset.splat.dye, hue)
+    const colors = listedColors(preset)
+    const mode = splatColorMode(preset.splat)
+    if (seenColorMode === 'cycle' && mode === 'click' && colors.length) {
+      colorIndex = Math.floor(cyclePhase) % colors.length
+      colorArmed = false
+    }
+    if (seenColorMode === 'click' && mode === 'cycle') {
+      cyclePhase = colors.length ? colorIndex % colors.length : 0
+      cycleAt = performance.now()
+    }
+    seenColorMode = mode
+    return mode
+  }
+
+  /** The first stroke keeps the current color. Each later press of the paint button moves to the next one. */
+  function stepClickColor(count: number) {
+    if (count < 2) return
+    colorIndex %= count
+    if (colorArmed) colorIndex = (colorIndex + 1) % count
+    colorArmed = true
+  }
+
+  function paletteColor(preset: Preset): FluidColor {
+    const colors = listedColors(preset)
+    const dye = preset.splat.dye
+    if (!colors.length) return dyeFromColor(0xffffff, dye)
+    const mode = splatColorMode(preset.splat)
+    if (mode === 'cycle' && colors.length > 1) {
+      const now = performance.now()
+      const dt = cycleAt ? Math.max(0, (now - cycleAt) / 1000) : 0
+      cycleAt = now
+      const seconds = Math.max(0.05, preset.splat.cycleSeconds || 8)
+      cyclePhase = (cyclePhase + (dt / seconds) * colors.length) % colors.length
+      const index = Math.floor(cyclePhase) % colors.length
+      const next = (index + 1) % colors.length
+      const t = cyclePhase - Math.floor(cyclePhase)
+      const eased = t * t * (3 - 2 * t)
+      return dyeBlend(colors[index], colors[next], eased, dye)
+    }
+    return dyeFromColor(colors[colorIndex % colors.length] ?? colors[0], dye)
   }
 
   function readAudioOptions(): AudioListenOptions {
@@ -211,7 +263,6 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       width: canvas.clientWidth,
       height: canvas.clientHeight,
       dye: preset.splat.dye,
-      colorful: preset.splat.colorful,
       getNumber,
       setNumber,
       transitionTarget,
@@ -364,6 +415,29 @@ function cursorPaints(preset: Preset, buttons: HeldButtons) {
   if (preset.splat.paint === 'left') return buttons.left
   if (preset.splat.paint === 'right') return buttons.right
   return true
+}
+
+function paintPressed(preset: Preset, prev: HeldButtons, next: HeldButtons) {
+  if (preset.splat.paint === 'left') return !prev.left && next.left
+  if (preset.splat.paint === 'right') return !prev.right && next.right
+  return false
+}
+
+function listedColors(preset: Preset) {
+  const raw = preset.splat.colors
+  if (!Array.isArray(raw)) return [...defaultSplatColors]
+  return raw.filter((color): color is number => typeof color === 'number' && Number.isFinite(color))
+}
+
+function dyeBlend(from: number, to: number, amount: number, dye: number): FluidColor {
+  const start = dyeFromColor(from, dye)
+  const end = dyeFromColor(to, dye)
+  const t = Math.min(1, Math.max(0, amount))
+  return {
+    r: start.r + (end.r - start.r) * t,
+    g: start.g + (end.g - start.g) * t,
+    b: start.b + (end.b - start.b) * t,
+  }
 }
 
 function clamp(value: number, min: number, max: number) {

@@ -93,13 +93,33 @@ export type PresetSettings = Record<PresetNumberSetting, number> &
     BACK_COLOR: FluidColor
   }
 
+/** `click` steps to the next color when the paint button goes down. `cycle` blends through the list. */
+export type SplatColorMode = 'click' | 'cycle'
+
+export const defaultSplatColors = [0xff4466, 0x44dd88, 0x4488ff]
+
+/** Reads the palette mode, including presets saved before the palette existed. */
+export function splatColorMode(
+  splat: { colorMode?: unknown; colorful?: unknown } | null | undefined,
+  fallback: SplatColorMode = 'cycle',
+): SplatColorMode {
+  if (splat?.colorMode === 'click' || splat?.colorMode === 'cycle') return splat.colorMode
+  if (splat?.colorful === false) return 'click'
+  if (splat?.colorful === true) return 'cycle'
+  return fallback
+}
+
 export type Preset = {
   id: string
   name: string
   splat: {
     force: number
     dye: number
-    colorful: boolean
+    /** Packed `0xRRGGBB` colors the cursor paints with, in order. */
+    colors: number[]
+    colorMode: SplatColorMode
+    /** Seconds for one full pass through `colors` while `colorMode` is `cycle`. */
+    cycleSeconds: number
     /** Always, or only while the left or right button is dragged. */
     paint: 'always' | 'left' | 'right'
   }

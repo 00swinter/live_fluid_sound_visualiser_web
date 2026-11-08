@@ -21,7 +21,6 @@ export type ActionContext = {
   width: number
   height: number
   dye: number
-  colorful: boolean
   /** Current preset value for a numeric setting. */
   getNumber: (key: PresetNumberSetting) => number
   /** Save a numeric setting on the preset and apply it to the simulation. */

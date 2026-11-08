@@ -1,7 +1,7 @@
 <script lang="ts">
   import { audio } from '../audio/session.svelte'
   import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramEase, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
-  import { driveSources, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
+  import { defaultSplatColors, driveSources, splatColorMode, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
@@ -63,7 +63,7 @@
     { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down. Either one can switch a setting between two values.' },
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
-    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, how hard it paints, and which settings follow its position.' },
+    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, which colors it uses, and which settings follow its position.' },
     { id: 'audio', label: 'Audio', hint: 'Microphone is the room. System is everything playing on this computer. Beats can run an action, each band can move a setting, and the sound can paint on its own.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'general', label: 'General', hint: 'Bloom, shading, pause, and the background.' },
@@ -683,14 +683,30 @@
               </p>
               {@render slider('Force', preset.splat.force, 0.5, 40, 0.1, (value) => setSplat({ force: value }))}
               {@render slider('Dye', preset.splat.dye, 0.02, 1, 0.01, (value) => setSplat({ dye: value }))}
-              <label class="check">
-                <input
-                  type="checkbox"
-                  checked={preset.splat.colorful}
-                  onchange={(event) => setSplat({ colorful: event.currentTarget.checked })}
-                />
-                <span>Shift color while moving</span>
+              {@render colorList('cursor-colors', 'Colors', preset.splat.colors ?? defaultSplatColors, (colors) => setSplat({ colors }))}
+              <label class="field">
+                <span class="name">Color change</span>
+                <select
+                  value={splatColorMode(preset.splat)}
+                  onchange={(event) => {
+                    const next = event.currentTarget.value
+                    if (next === 'click' || next === 'cycle') setSplat({ colorMode: next })
+                  }}
+                >
+                  <option value="click">On click</option>
+                  <option value="cycle">Cycle</option>
+                </select>
               </label>
+              {#if splatColorMode(preset.splat) === 'cycle'}
+                {@render slider('Seconds', preset.splat.cycleSeconds ?? 8, 0.4, 40, 0.1, (value) => setSplat({ cycleSeconds: value }))}
+                <p class="note aside">One pass through the list. The color eases from each one into the next.</p>
+              {:else if preset.splat.paint === 'always'}
+                <p class="note aside">The cursor paints without a button, so this stays on the current color. Cycle moves through the list on its own.</p>
+              {:else}
+                <p class="note aside">
+                  Each time the {preset.splat.paint} button goes down, the next color is used for that stroke.
+                </p>
+              {/if}
               {#each properties.filter((control) => control.group === 'Splat') as control (control.key)}
                 {@render slider(control.label, preset.settings[control.key], control.min, control.max, control.step, (value) =>
                   commitNumber(control.key, value),

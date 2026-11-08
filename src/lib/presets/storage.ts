@@ -1,6 +1,6 @@
 import { properties, snapControl, type ParamValue, type PerformanceSetting } from '../behaviors'
 import { defaultPreset } from './defaultPreset'
-import { completeAudio, type AxisMap, type ButtonBinding, type Preset, type PresetSettings, type ScrollSetting } from './types'
+import { completeAudio, splatColorMode, type AxisMap, type ButtonBinding, type Preset, type PresetSettings, type ScrollSetting } from './types'
 
 const STORAGE_KEY = 'live-fluid-presets'
 const PERFORMANCE_KEY = 'live-fluid-performance'
@@ -121,7 +121,9 @@ function parsePreset(raw: unknown): Preset | null {
     splat: {
       force: finite(value.splat?.force, base.splat.force),
       dye: finite(value.splat?.dye, base.splat.dye),
-      colorful: bool(value.splat?.colorful, base.splat.colorful),
+      colors: parseColorList(savedSplat(value).colors, base.splat.colors),
+      colorMode: splatColorMode(savedSplat(value), base.splat.colorMode),
+      cycleSeconds: finite(value.splat?.cycleSeconds, base.splat.cycleSeconds),
       paint: parsePaint(value),
     },
     cursor: {
@@ -159,6 +161,17 @@ function parseSettings(raw: unknown): PresetSettings {
     settings.BACK_COLOR = { r: color.r, g: color.g, b: color.b }
   }
   return settings
+}
+
+function savedSplat(value: Partial<Preset>) {
+  return (value.splat ?? {}) as Partial<Preset['splat']> & { colorful?: unknown }
+}
+
+function parseColorList(raw: unknown, fallback: number[]) {
+  if (!Array.isArray(raw)) return [...fallback]
+  return raw
+    .filter((color): color is number => typeof color === 'number' && Number.isFinite(color))
+    .map((color) => Math.round(color) & 0xffffff)
 }
 
 function parsePaint(value: Partial<Preset>): Preset['splat']['paint'] {

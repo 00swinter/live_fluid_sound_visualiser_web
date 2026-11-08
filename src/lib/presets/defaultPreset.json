@@ -4,7 +4,9 @@
   "splat": {
     "force": 5,
     "dye": 0.15,
-    "colorful": true,
+    "colors": [16729190, 4513160, 4491519],
+    "colorMode": "cycle",
+    "cycleSeconds": 8,
     "paint": "always"
   },
   "cursor": {
