@@ -93,6 +93,49 @@ function freshLibrary(): PresetLibrary {
   return { activeId: defaultPreset.id, presets: [structuredClone(defaultPreset)] }
 }
 
+/**
+ * Copies from `public/presets.json` for the browser library.
+ * The file may be an array of exported presets, one preset, or `{ presets: [...] }`.
+ * Each copy gets a new id. A name already in `takenNames` is kept and the new one ends with `(1)`, `(2)`, and so on.
+ */
+export function presetCopies(raw: unknown, takenNames: Iterable<string>): Preset[] {
+  const taken = new Set(takenNames)
+  const copies: Preset[] = []
+  for (const item of bundleItems(raw)) {
+    const preset = parsePreset(withPresetId(item))
+    if (!preset) continue
+    preset.id = crypto.randomUUID()
+    preset.name = openName(preset.name, taken)
+    taken.add(preset.name)
+    copies.push(preset)
+  }
+  return copies
+}
+
+function bundleItems(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { presets?: unknown }).presets)) {
+    return (raw as { presets: unknown[] }).presets
+  }
+  if (raw && typeof raw === 'object') return [raw]
+  return []
+}
+
+function withPresetId(item: unknown) {
+  if (!item || typeof item !== 'object') return item
+  const value = item as { id?: unknown }
+  if (typeof value.id === 'string' && value.id.length > 0) return item
+  return { ...value, id: crypto.randomUUID() }
+}
+
+function openName(name: string, taken: Set<string>) {
+  const base = name.trim() || 'Preset'
+  if (!taken.has(base)) return base
+  let count = 1
+  while (taken.has(`${base} (${count})`)) count += 1
+  return `${base} (${count})`
+}
+
 function parseLibrary(raw: unknown): PresetLibrary | null {
   if (!raw || typeof raw !== 'object') return null
   const value = raw as { activeId?: unknown; presets?: unknown }

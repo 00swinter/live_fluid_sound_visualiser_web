@@ -5,7 +5,8 @@
   import { playPreset } from './lib/performance/playPreset'
   import { stampPresetName } from './lib/performance/presetName'
   import { defaultPreset } from './lib/presets/defaultPreset'
-import { loadPerformance, loadPresetLibrary, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
+  import { createRandomPreset, RANDOM_PRESET_ID } from './lib/presets/randomPreset'
+import { loadPerformance, loadPresetLibrary, presetCopies, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
 import { applySettings, completeSymmetry, defaultAudio, type AudioBand, type AudioMap, type AxisMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type Preset } from './lib/presets/types'
 import type { PresetNumberSetting } from './lib/behaviors'
 
@@ -137,6 +138,20 @@ import type { PresetNumberSetting } from './lib/behaviors'
     selectPreset(presets[(from + direction + count) % count].id)
   }
 
+  /** Rewrite the one random slot and play it. Every other preset stays as it is. */
+  function loadRandomPreset() {
+    const generated = createRandomPreset()
+    const index = presets.findIndex((item) => item.id === RANDOM_PRESET_ID)
+    if (index >= 0) presets[index] = generated
+    else presets.push(generated)
+    activeId = generated.id
+    if (sim) {
+      applySettings(sim, generated.settings)
+      sim.clear()
+    }
+    revealPreset(generated.name)
+  }
+
   function addPreset() {
     const copy = structuredClone(defaultPreset)
     copy.id = crypto.randomUUID()
@@ -177,6 +192,37 @@ import type { PresetNumberSetting } from './lib/behaviors'
     revealPreset(next.name)
   }
 
+  /** Copies `public/presets.json` into this browser. Does nothing until the button asks. */
+  async function addBundledPresets() {
+    let response: Response
+    try {
+      response = await fetch(`${import.meta.env.BASE_URL}presets.json`, { cache: 'no-cache' })
+    } catch {
+      return 'Could not load presets.json.'
+    }
+    if (!response.ok) return 'Could not load presets.json.'
+    let raw: unknown
+    try {
+      raw = await response.json()
+    } catch {
+      return 'presets.json is not valid JSON.'
+    }
+    const copies = presetCopies(raw, presets.map((item) => item.name))
+    if (copies.length === 0) return 'presets.json has no presets.'
+    for (const copy of copies) presets.push(copy)
+    return copies.length === 1 ? 'Added 1 preset.' : `Added ${copies.length} presets.`
+  }
+
+  /** Drops every preset saved in this browser and leaves one fresh default. */
+  function clearSavedPresets() {
+    const fresh = structuredClone(defaultPreset)
+    fresh.id = crypto.randomUUID()
+    presets.splice(0, presets.length, fresh)
+    activeId = fresh.id
+    if (sim) applySettings(sim, fresh.settings)
+    revealPreset(fresh.name)
+  }
+
   function clonePreset(source: Preset, name: string) {
     const copy = structuredClone($state.snapshot(source))
     copy.id = crypto.randomUUID()
@@ -202,7 +248,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     sim = fluid
     fluid.set('SIM_RESOLUTION', performance.SIM_RESOLUTION)
     fluid.set('DYE_RESOLUTION', performance.DYE_RESOLUTION)
-    const stopPreset = playPreset(canvas, fluid, livePreset, stepPreset)
+    const stopPreset = playPreset(canvas, fluid, livePreset, stepPreset, loadRandomPreset)
 
     function onKey(event: KeyboardEvent) {
       if (event.repeat || (event.key !== 't' && event.key !== 'T')) return
@@ -246,6 +292,8 @@ import type { PresetNumberSetting } from './lib/behaviors'
     {setAudioDrive}
     {performance}
     {commitPerformance}
+    {addBundledPresets}
+    {clearSavedPresets}
   />
 </div>
 

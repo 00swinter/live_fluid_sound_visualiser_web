@@ -9,12 +9,13 @@ import { applySettings, defaultAudio, defaultSplatColors, splatColorMode, type A
 
 const SLOTS: ButtonSlot[] = ['left', 'right', 'middle']
 
-/** Movement can paint and map screen position. Buttons and the wheel read the active preset. The bottom-left corner steps to another preset. */
+/** Movement can paint and map screen position. Buttons and the wheel read the active preset. The bottom-left corner steps through presets with the wheel. A middle click there reloads the random preset. */
 export function playPreset(
   canvas: HTMLCanvasElement,
   sim: FluidSim,
   getPreset: () => Preset,
   stepPreset: (direction: 1 | -1) => void,
+  loadRandomPreset: () => void,
 ): () => void {
   applySettings(sim, getPreset().settings)
 
@@ -38,16 +39,20 @@ export function playPreset(
   let pulsePreset = ''
   let pulses = new Map<PresetNumberSetting, { home: number; generation: number }>()
   let cornerWheel = 0
+  let physicalMiddle = false
+  /** Middle click in the corner loads random and must not also run the middle binding. */
+  let cornerMiddle = false
 
   const stopPointer = watchPointer(canvas, {
     onMove(move) {
       if (move.dx === 0 && move.dy === 0) return
+      const buttons = liveButtons(move.buttons)
       const preset = getPreset()
       const width = canvas.clientWidth
       const height = canvas.clientHeight
-      if (width > 0) applyMapped(preset.cursor.x, clamp(move.x / width, 0, 1), move.buttons)
-      if (height > 0) applyMapped(preset.cursor.y, clamp(move.y / height, 0, 1), move.buttons)
-      const paint = collectHold(move.buttons, move)
+      if (width > 0) applyMapped(preset.cursor.x, clamp(move.x / width, 0, 1), buttons)
+      if (height > 0) applyMapped(preset.cursor.y, clamp(move.y / height, 0, 1), buttons)
+      const paint = collectHold(buttons, move)
       sim.set('SPLAT_RADIUS', paint.radius ?? getPreset().settings.SPLAT_RADIUS)
       if (!paint.paint) return
       const color = currentColor()
@@ -57,22 +62,31 @@ export function playPreset(
       }
     },
     onButtons(next, point) {
+      const middlePressed = !physicalMiddle && next.middle
+      physicalMiddle = next.middle
+      if (middlePressed && inPresetCorner(point.x, point.y, canvas.clientWidth, canvas.clientHeight)) {
+        cornerMiddle = true
+        resetLiveState()
+        loadRandomPreset()
+      }
+      if (!next.middle) cornerMiddle = false
+      const buttons = liveButtons(next)
       const preset = getPreset()
       const mode = noteColorMode(preset)
-      if (mode === 'click' && paintPressed(preset, held, next)) stepClickColor(listedColors(preset).length)
+      if (mode === 'click' && paintPressed(preset, held, buttons)) stepClickColor(listedColors(preset).length)
       const ctx = actionContext(point)
       for (const slot of SLOTS) {
         const binding = preset[slot]
-        if (!held[slot] && next[slot]) {
+        if (!held[slot] && buttons[slot]) {
           const action = clickAction(binding.click)
           if (action) action.onPress(ctx, actionParams(action, binding.clickParams))
         }
-        if (held[slot] && !next[slot]) {
+        if (held[slot] && !buttons[slot]) {
           const action = holdAction(binding.hold)
           if (action?.onRelease) action.onRelease(ctx, actionParams(action, binding.holdParams))
         }
       }
-      held = { ...next }
+      held = { ...buttons }
       syncRadius(held, point)
     },
     onWheel(wheel) {
@@ -114,6 +128,22 @@ export function playPreset(
     pulses.clear()
     restoreDriven()
     stopFrame()
+  }
+
+  /** Drop in-flight pulses and transitions so a fresh roll of the same preset is not overwritten. */
+  function resetLiveState() {
+    for (const handle of timers) window.clearTimeout(handle)
+    timers = []
+    transitions = []
+    pulses.clear()
+    colorPreset = ''
+    transitionPreset = ''
+    pulsePreset = ''
+    stopFrame()
+  }
+
+  function liveButtons(buttons: HeldButtons): HeldButtons {
+    return cornerMiddle ? { ...buttons, middle: false } : buttons
   }
 
   function currentColor() {

@@ -102,17 +102,6 @@ const edgeAxes = [
   { value: 'leftRight', label: 'Left and right' },
 ] as const
 
-const edgeSides = [
-  { value: 'both', label: 'Both edges' },
-  { value: 'start', label: 'Top or left' },
-  { value: 'end', label: 'Bottom or right' },
-] as const
-
-const edgeAims = [
-  { value: 'in', label: 'Toward the other edge' },
-  { value: 'out', label: 'Away from the edge' },
-] as const
-
 const edgeColorOrders = [
   { value: 'along', label: 'Along the line' },
   { value: 'match', label: 'Same on both edges' },
@@ -222,22 +211,15 @@ export const clickActions: ClickAction[] = [
     id: 'edgeLines',
     label: 'Edge lines',
     detail: 'Lines',
-    note: 'A line of splats on the top and bottom, or the left and right. Each one is pushed toward the opposite edge. Inset is how far the line sits in from the edge. Span is how much of the edge it covers, and Slide moves that stretch toward one end. Stagger shifts the second edge by one gap and wraps past the end. Spread fans the outer splats, in degrees. Drift is speed along the edge, and Jitter shakes each splat along the line.',
+    note: 'A line of splats on both the top and bottom, or both the left and right. Each splat is pushed straight in toward the opposite edge, and the two edges use the same positions. Inset is how far the line sits in from the edge. Span is how much of the edge it covers, kept centered.',
     params: [
       { kind: 'choice', key: 'axis', label: 'Edges', default: 'topBottom', options: edgeAxes },
-      { kind: 'choice', key: 'sides', label: 'From', default: 'both', options: edgeSides },
-      { kind: 'choice', key: 'aim', label: 'Aim', default: 'in', options: edgeAims },
       { key: 'count', label: 'Count', min: 1, max: 40, step: 1, default: 6 },
       { key: 'speed', label: 'Speed', min: 0, max: 2000, step: 10, default: 1000 },
       { key: 'size', label: 'Size', min: 0.05, max: 2, step: 0.01, default: 0.3 },
       { key: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.15 },
       { key: 'inset', label: 'Inset', min: 0, max: 0.45, step: 0.01, default: 0.04 },
       { key: 'span', label: 'Span', min: 0.05, max: 1, step: 0.01, default: 1 },
-      { key: 'slide', label: 'Slide', min: -1, max: 1, step: 0.01, default: 0 },
-      { key: 'stagger', label: 'Stagger', min: 0, max: 1, step: 0.01, default: 0 },
-      { key: 'spread', label: 'Spread', min: -90, max: 90, step: 1, default: 0 },
-      { key: 'drift', label: 'Drift', min: -2000, max: 2000, step: 10, default: 0 },
-      { key: 'jitter', label: 'Jitter', min: 0, max: 1, step: 0.01, default: 0 },
       { kind: 'choice', key: 'colorOrder', label: 'Color order', default: 'along', options: edgeColorOrders },
       {
         kind: 'colors',
@@ -252,39 +234,27 @@ export const clickActions: ClickAction[] = [
       const intensity = paramNumber(params, 'intensity', 0.15)
       const inset = Math.min(0.45, Math.max(0, paramNumber(params, 'inset', 0.04)))
       const span = Math.min(1, Math.max(0.05, paramNumber(params, 'span', 1)))
-      const slide = Math.min(1, Math.max(-1, paramNumber(params, 'slide', 0)))
-      const stagger = Math.min(1, Math.max(0, paramNumber(params, 'stagger', 0)))
-      const spread = paramNumber(params, 'spread', 0) * (Math.PI / 180)
-      const drift = paramNumber(params, 'drift', 0)
-      const jitter = Math.max(0, paramNumber(params, 'jitter', 0))
       const axis = paramChoice(params, 'axis', edgeAxes, 'topBottom')
-      const sides = paramChoice(params, 'sides', edgeSides, 'both')
-      const aim = paramChoice(params, 'aim', edgeAims, 'in')
       const order = paramChoice(params, 'colorOrder', edgeColorOrders, 'along')
       const listed = paramColors(params, 'colors')
       const colors = listed.length ? listed : [0xffffff]
-      const toward = aim === 'out' ? -1 : 1
       const previousRadius = ctx.getNumber('SPLAT_RADIUS')
       ctx.sim.set('SPLAT_RADIUS', paramNumber(params, 'size', 0.3))
       const fire = (edge: 'start' | 'end') => {
-        const phase = edge === 'end' ? stagger : 0
-        const push = (edge === 'start' ? speed : -speed) * toward
+        const push = edge === 'start' ? speed : -speed
         for (let index = 0; index < count; index++) {
-          const along = edgeSlot(index, count, span, phase, slide, jitter)
+          const along = edgeSlot(index, count, span)
           const across = edge === 'start' ? inset : 1 - inset
-          const fan = (edgeUnit(index, count, phase) - 0.5) * spread
           const color = burstColor(colorAt(order, colors, index, count, edge), intensity)
           if (axis === 'leftRight') {
-            const velocity = rotate(push, drift, fan)
-            ctx.sim.splat(across * ctx.width, along * ctx.height, velocity.x, velocity.y, color)
+            ctx.sim.splat(across * ctx.width, along * ctx.height, push, 0, color)
           } else {
-            const velocity = rotate(drift, push, fan)
-            ctx.sim.splat(along * ctx.width, across * ctx.height, velocity.x, velocity.y, color)
+            ctx.sim.splat(along * ctx.width, across * ctx.height, 0, push, color)
           }
         }
       }
-      if (sides !== 'end') fire('start')
-      if (sides !== 'start') fire('end')
+      fire('start')
+      fire('end')
       ctx.sim.set('SPLAT_RADIUS', previousRadius)
     },
   },
@@ -582,28 +552,10 @@ export function hexToColorParam(hex: string) {
   return Number.parseInt(hex.slice(1), 16)
 }
 
-function wrap01(value: number) {
-  return value - Math.floor(value)
-}
-
-/** Even slots along an edge. `phase` shifts by fractions of one gap and wraps. */
-function edgeUnit(index: number, count: number, phase: number) {
-  if (count <= 1) return 0.5
-  return wrap01((index + phase + 0.5) / count)
-}
-
-function edgeSlot(index: number, count: number, span: number, phase: number, slide: number, jitter: number) {
-  const unit = edgeUnit(index, count, phase)
-  const half = span / 2
-  const center = Math.min(1 - half, Math.max(half, 0.5 + slide * 0.5))
-  const shake = jitter > 0 ? (Math.random() - 0.5) * (span / Math.max(1, count)) * jitter : 0
-  return Math.min(1, Math.max(0, center + (unit - 0.5) * span + shake))
-}
-
-function rotate(x: number, y: number, radians: number) {
-  const cos = Math.cos(radians)
-  const sin = Math.sin(radians)
-  return { x: x * cos - y * sin, y: x * sin + y * cos }
+/** Even slots along an edge, centered so the two edges line up. */
+function edgeSlot(index: number, count: number, span: number) {
+  const unit = count <= 1 ? 0.5 : (index + 0.5) / count
+  return 0.5 + (unit - 0.5) * span
 }
 
 function colorAt(

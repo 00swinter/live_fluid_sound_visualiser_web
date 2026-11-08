@@ -1,12 +1,21 @@
 {
-  "id": "509d3248-017a-47d1-9402-ef1a782276fb",
+  "id": "6ad26b8e-01c3-4aa3-be10-d8edd094072a",
   "name": "default",
   "splat": {
-    "force": 5,
-    "dye": 0.15,
-    "colors": [16729190, 4513160, 4491519],
+    "force": 5.8,
+    "dye": 0.17,
+    "colors": [
+      16723245,
+      16747008,
+      16769354,
+      4054634,
+      2807039,
+      4021247,
+      11816447,
+      16727450
+    ],
     "colorMode": "cycle",
-    "cycleSeconds": 8,
+    "cycleSeconds": 4,
     "paint": "always"
   },
   "cursor": {
@@ -28,20 +37,20 @@
     }
   },
   "settings": {
-    "DENSITY_DISSIPATION": 0.994,
-    "VELOCITY_DISSIPATION": 0.98,
+    "DENSITY_DISSIPATION": 0.982,
+    "VELOCITY_DISSIPATION": 0.971,
     "PRESSURE_DISSIPATION": 0.8,
-    "PRESSURE_ITERATIONS": 20,
-    "CURL": 0,
+    "PRESSURE_ITERATIONS": 18,
+    "CURL": 21,
     "DELTA_TIME": 0.016,
-    "SPLAT_RADIUS": 0.16,
-    "BLOOM_ITERATIONS": 8,
+    "SPLAT_RADIUS": 0.27,
+    "BLOOM_ITERATIONS": 4,
     "BLOOM_RESOLUTION": 256,
-    "BLOOM_INTENSITY": 0.8,
-    "BLOOM_THRESHOLD": 0.6,
+    "BLOOM_INTENSITY": 0.02,
+    "BLOOM_THRESHOLD": 0.93,
     "BLOOM_SOFT_KNEE": 0.7,
     "SHADING": true,
-    "BLOOM": false,
+    "BLOOM": true,
     "PAUSED": false,
     "TRANSPARENT": false,
     "BACK_COLOR": {
@@ -54,31 +63,40 @@
     "click": "randomSplats",
     "hold": null,
     "clickParams": {
-      "count": 10,
-      "speed": 1000,
-      "size": 0.3,
-      "intensity": 0.15,
+      "count": 27,
+      "speed": 2000,
+      "size": 0.17,
+      "intensity": 0.2,
       "colors": [
-        16711727,
-        65284,
-        31743,
-        15662848,
-        16449791
+        16724821,
+        16763955,
+        3399802,
+        3393535,
+        11163135
       ]
     },
     "holdParams": {}
   },
   "right": {
-    "click": null,
-    "hold": "holdValue",
-    "clickParams": {},
-    "holdParams": {
-      "setting": "CURL",
-      "released": 0,
-      "held": 15,
-      "easing": "easeInOut",
-      "seconds": 0.5
-    }
+    "click": "edgeLines",
+    "hold": null,
+    "clickParams": {
+      "axis": "topBottom",
+      "count": 6,
+      "speed": 1000,
+      "size": 0.3,
+      "intensity": 0.15,
+      "inset": 0.06,
+      "span": 1,
+      "colorOrder": "along",
+      "colors": [
+        2735303,
+        1981023,
+        6000596,
+        15003388
+      ]
+    },
+    "holdParams": {}
   },
   "middle": {
     "click": null,
@@ -88,7 +106,7 @@
       "setting": "DENSITY_DISSIPATION",
       "released": 0.994,
       "held": 0.8,
-      "easing": "easeInOut",
+      "easing": "constant",
       "seconds": 0
     }
   },
@@ -106,10 +124,35 @@
     "beat": null,
     "beatParams": {},
     "colorFromPitch": false,
-    "level": { "enabled": false, "setting": "CURL", "min": 0, "max": 45 },
-    "bass": { "enabled": false, "setting": "SPLAT_RADIUS", "min": 0.08, "max": 0.5 },
-    "mid": { "enabled": false, "setting": "VELOCITY_DISSIPATION", "min": 0.97, "max": 0.995 },
-    "treble": { "enabled": false, "setting": "BLOOM_INTENSITY", "min": 0.1, "max": 1.5 },
-    "drive": { "enabled": false, "source": "bass", "force": 7, "dye": 1 }
+    "level": {
+      "enabled": false,
+      "setting": "CURL",
+      "min": 0,
+      "max": 45
+    },
+    "bass": {
+      "enabled": false,
+      "setting": "SPLAT_RADIUS",
+      "min": 0.08,
+      "max": 0.5
+    },
+    "mid": {
+      "enabled": false,
+      "setting": "VELOCITY_DISSIPATION",
+      "min": 0.97,
+      "max": 0.995
+    },
+    "treble": {
+      "enabled": false,
+      "setting": "BLOOM_INTENSITY",
+      "min": 0.1,
+      "max": 1.5
+    },
+    "drive": {
+      "enabled": false,
+      "source": "bass",
+      "force": 7,
+      "dye": 1
+    }
   }
 }

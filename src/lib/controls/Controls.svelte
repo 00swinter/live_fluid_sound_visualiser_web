@@ -1,7 +1,7 @@
 <script lang="ts">
   import { audio } from '../audio/session.svelte'
   import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramChoice, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
-  import { colorListPresetIndex, colorListPresets } from '../presets/colorListPresets'
+  import { colorListGroups, colorListPresetIndex, colorListPresets } from '../presets/colorListPresets'
   import { defaultPreset } from '../presets/defaultPreset'
   import { completeSymmetry, defaultSplatColors, driveSources, mirrorCounts, rotateCounts, splatColorMode, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type DriveSource, type Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
@@ -31,6 +31,8 @@
     setAudioDrive,
     performance,
     commitPerformance,
+    addBundledPresets,
+    clearSavedPresets,
   }: {
     presets: Preset[]
     activeId: string
@@ -52,6 +54,8 @@
     setAudioDrive: (patch: Partial<Preset['audio']['drive']>) => void
     performance: PerformanceSettings
     commitPerformance: (key: PerformanceSetting, value: number) => void
+    addBundledPresets: () => Promise<string>
+    clearSavedPresets: () => void
   } = $props()
 
   const meters = [
@@ -74,7 +78,11 @@
   ]
 
   let category = $state<CategoryId>('left')
-  let showPerformance = $state(false)
+  let showGlobal = $state(false)
+  let addingPresets = $state(false)
+  let confirmClear = $state(false)
+  let libraryNote = $state('')
+  let libraryWarn = $state(false)
 
   const preset = $derived(presets.find((item) => item.id === activeId) ?? presets[0])
   const current = $derived(categories.find((item) => item.id === category) ?? categories[0])
@@ -338,6 +346,66 @@
     window.clearTimeout(copyTimer)
     copyTimer = window.setTimeout(() => (exportLabel = 'Export'), 1500)
   }
+
+  let exportAllLabel = $state('Export presets')
+  let exportAllTimer = 0
+
+  function exportAllPresets() {
+    const list = ($state.snapshot(presets) as Preset[]).filter((item) => item.name.trim().toLowerCase() !== 'default')
+    if (list.length === 0) {
+      exportAllLabel = 'Copy failed'
+      libraryNote = 'Nothing to copy. The preset named default is left out.'
+      libraryWarn = true
+      window.clearTimeout(exportAllTimer)
+      exportAllTimer = window.setTimeout(() => (exportAllLabel = 'Export presets'), 1500)
+      return
+    }
+    const json = JSON.stringify(list, null, 2)
+    const finish = (ok: boolean) => {
+      exportAllLabel = ok ? 'Copied' : 'Copy failed'
+      libraryNote = ok
+        ? list.length === 1
+          ? 'Copied 1 preset. The preset named default was left out.'
+          : `Copied ${list.length} presets. The preset named default was left out.`
+        : 'Could not copy the presets.'
+      libraryWarn = !ok
+      window.clearTimeout(exportAllTimer)
+      exportAllTimer = window.setTimeout(() => (exportAllLabel = 'Export presets'), 1500)
+    }
+    if (copyText(json)) {
+      finish(true)
+      return
+    }
+    void navigator.clipboard.writeText(json).then(
+      () => finish(true),
+      () => finish(false),
+    )
+  }
+
+  function closeGlobal() {
+    showGlobal = false
+    confirmClear = false
+  }
+
+  async function addPresetPack() {
+    if (addingPresets) return
+    addingPresets = true
+    confirmClear = false
+    try {
+      const text = await addBundledPresets()
+      libraryNote = text
+      libraryWarn = !text.startsWith('Added')
+    } finally {
+      addingPresets = false
+    }
+  }
+
+  function confirmDeleteAll() {
+    confirmClear = false
+    clearSavedPresets()
+    libraryNote = 'Removed every saved preset. One fresh default is left.'
+    libraryWarn = false
+  }
 </script>
 
 {#snippet resetButton(label: string, matches: boolean, onReset: () => void)}
@@ -437,8 +505,12 @@
         }}
       >
         <option value="">Custom</option>
-        {#each colorListPresets as preset, index (`${preset.name}-${index}`)}
-          <option value={String(index)}>{preset.name}</option>
+        {#each colorListGroups as group (group.name)}
+          <optgroup label={group.name}>
+            {#each group.presets as preset (preset.index)}
+              <option value={String(preset.index)}>{preset.name}</option>
+            {/each}
+          </optgroup>
         {/each}
       </select>
     </label>
@@ -712,12 +784,15 @@
     <p class="hint">Press T to hide</p>
     <button
       class="perf"
-      class:on={showPerformance}
+      class:on={showGlobal}
       type="button"
-      aria-pressed={showPerformance}
-      onclick={() => (showPerformance = !showPerformance)}
+      aria-pressed={showGlobal}
+      onclick={() => {
+        showGlobal = !showGlobal
+        if (!showGlobal) confirmClear = false
+      }}
     >
-      Performance
+      Global settings
     </button>
   </div>
 
@@ -727,11 +802,11 @@
         {#each categories as item (item.id)}
           <button
             class="cat"
-            class:on={category === item.id && !showPerformance}
+            class:on={category === item.id && !showGlobal}
             type="button"
-            aria-pressed={category === item.id && !showPerformance}
+            aria-pressed={category === item.id && !showGlobal}
             onclick={() => {
-              showPerformance = false
+              closeGlobal()
               category = item.id
             }}
           >
@@ -744,17 +819,41 @@
       </div>
 
       <div class="well">
-        <h2>{showPerformance ? 'Performance' : current.label}</h2>
+        <h2>{showGlobal ? 'Global settings' : current.label}</h2>
         <p class="note">
-          {showPerformance ? 'Shared by every preset. Lower these if the simulation starts to lag.' : current.hint}
+          {showGlobal ? 'Shared by every preset. Lower the resolution if the simulation starts to lag.' : current.hint}
         </p>
 
-        {#if showPerformance}
+        {#if showGlobal}
           {#each performanceControls as control (control.key)}
             {@render slider(control.label, performance[control.key], control.min, control.max, control.step, (value) =>
               commitPerformance(control.key, value),
             )}
           {/each}
+          <div class="group library">
+            <p class="note">
+              Export presets copies every preset in this browser except the one named default. Paste that JSON into presets.json. Add presets copies the file back into this browser, and only when you press it. Press again to add another set. A name that is already saved stays, and the new one ends with (1), (2), and so on.
+            </p>
+            <div class="actions">
+              <button class="action" type="button" onclick={exportAllPresets}>{exportAllLabel}</button>
+              <button class="action" type="button" onclick={addPresetPack} disabled={addingPresets}>
+                {addingPresets ? 'Adding…' : 'Add presets'}
+              </button>
+              {#if !confirmClear}
+                <button class="action danger" type="button" onclick={() => (confirmClear = true)}>Delete all presets</button>
+              {/if}
+            </div>
+            {#if confirmClear}
+              <p class="note warn">This removes every preset saved in this browser. A fresh default preset is left so there is still something to play.</p>
+              <div class="actions">
+                <button class="action danger" type="button" onclick={confirmDeleteAll}>Delete all saved presets</button>
+                <button class="action" type="button" onclick={() => (confirmClear = false)}>Cancel</button>
+              </div>
+            {/if}
+            {#if libraryNote}
+              <p class="note aside" class:warn={libraryWarn}>{libraryNote}</p>
+            {/if}
+          </div>
         {:else if category === 'preset'}
           <label class="field">
             <span class="name">Name</span>
@@ -1443,6 +1542,14 @@
 
   .group > .note {
     margin: 0.15rem 0 0.7rem;
+  }
+
+  .library {
+    margin-top: 0.35rem;
+  }
+
+  .library .actions {
+    margin-bottom: 0.85rem;
   }
 
   .group > .field,
