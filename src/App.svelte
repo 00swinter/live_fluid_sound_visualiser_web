@@ -17,6 +17,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
 
   let canvas: HTMLCanvasElement | undefined
   let showUi = $state(false)
+  let hideCursor = $state(true)
   let presets = $state<Preset[]>(stored.presets)
   let activeId = $state(stored.activeId)
   let performance = $state<PerformanceSettings>({ ...storedPerformance })
@@ -165,7 +166,9 @@ import type { PresetNumberSetting } from './lib/behaviors'
   function duplicatePreset() {
     const source = livePreset()
     const copy = clonePreset(source, copyName(source.name.trim() || 'Preset'))
-    presets.push(copy)
+    const index = presets.findIndex((item) => item.id === source.id)
+    if (index < 0) presets.push(copy)
+    else presets.splice(index + 1, 0, copy)
     activeId = copy.id
     revealPreset(copy.name)
   }
@@ -231,13 +234,13 @@ import type { PresetNumberSetting } from './lib/behaviors'
   }
 
   function copyName(name: string) {
-    const base = name.replace(/ copy(?: \d+)?$/, '')
+    const base = name.trim() || 'Preset'
     const taken = new Set(presets.map((item) => item.name))
-    let next = `${base} copy`
-    let count = 2
+    let count = 1
+    let next = `${base} (${count})`
     while (taken.has(next)) {
-      next = `${base} copy ${count}`
       count += 1
+      next = `${base} (${count})`
     }
     return next
   }
@@ -251,9 +254,15 @@ import type { PresetNumberSetting } from './lib/behaviors'
     const stopPreset = playPreset(canvas, fluid, livePreset, stepPreset, loadRandomPreset)
 
     function onKey(event: KeyboardEvent) {
-      if (event.repeat || (event.key !== 't' && event.key !== 'T')) return
+      if (event.repeat) return
+      const key = event.key.toLowerCase()
+      if (key !== 't' && key !== 'c') return
       if (showUi && isTextEntry(event.target)) return
       event.preventDefault()
+      if (key === 'c') {
+        hideCursor = !hideCursor
+        return
+      }
       if (showUi && document.activeElement instanceof HTMLElement) document.activeElement.blur()
       showUi = !showUi
     }
@@ -268,7 +277,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
   })
 </script>
 
-<canvas bind:this={canvas}></canvas>
+<canvas bind:this={canvas} style:cursor={hideCursor ? 'none' : 'auto'}></canvas>
 
 <div class="editor" class:hidden={!showUi} inert={!showUi} aria-hidden={!showUi}>
   <Controls

@@ -66,7 +66,7 @@
   ] as const
 
   const categories: { id: CategoryId; label: string; hint: string }[] = [
-    { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Duplicate copies this one. Reset restores this one to that file. The arrow on a control restores just that value. Export copies its JSON.' },
+    { id: 'preset', label: 'Preset', hint: 'The + button starts from the default preset file. Copy this places a copy beside this preset and names it the same with (1). Reset restores this one to that file. The arrow on a control restores just that value. Export copies its JSON.' },
     { id: 'left', label: 'Left', hint: 'Click runs once. Hold lasts while the left button is down. Either one can switch a setting between two values.' },
     { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down. Either one can switch a setting between two values.' },
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
@@ -871,7 +871,7 @@
             />
           </label>
           <div class="actions">
-            <button class="action" type="button" onclick={duplicatePreset}>Duplicate</button>
+            <button class="action" type="button" onclick={duplicatePreset}>Copy this</button>
             <button class="action" type="button" onclick={resetPreset}>Reset</button>
             <button class="action" type="button" onclick={exportPreset}>{exportLabel}</button>
             <button class="action danger" type="button" onclick={deletePreset} disabled={presets.length < 2}>Delete</button>
