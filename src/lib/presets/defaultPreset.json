@@ -21,6 +21,10 @@
       "setting": "DELTA_TIME",
       "min": 0,
       "max": 0.08
+    },
+    "symmetry": {
+      "kind": "off",
+      "count": 2
     }
   },
   "settings": {

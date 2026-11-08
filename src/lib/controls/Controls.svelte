@@ -1,7 +1,8 @@
 <script lang="ts">
   import { audio } from '../audio/session.svelte'
-  import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramEase, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
-  import { defaultSplatColors, driveSources, splatColorMode, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
+  import { clickAction, clickActions, colorParamToHex, commitParam, controlFor, defaultParams, formatControl, hexToColorParam, holdAction, holdActions, isChoiceParam, isColorListParam, isColorParam, isNumberParam, isSettingParam, paramChoice, paramSetting, performanceControls, properties, rangeFor, type ControlGroup, type ParamValue, type PerformanceSetting, type PresetNumberSetting } from '../behaviors'
+  import { colorListPresetIndex, colorListPresets } from '../presets/colorListPresets'
+  import { completeSymmetry, defaultSplatColors, driveSources, mirrorCounts, rotateCounts, splatColorMode, type AudioBand, type AudioMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type DriveSource, type Preset } from '../presets/types'
   import type { PerformanceSettings } from '../presets/storage'
   import type { FluidBooleanSetting, FluidColor } from '../fluid/createFluidSim'
 
@@ -21,6 +22,7 @@
     commitColor,
     setSplat,
     setCursor,
+    setSymmetry,
     setButton,
     setScroll,
     setAudio,
@@ -41,6 +43,7 @@
     commitColor: (color: FluidColor) => void
     setSplat: (patch: Partial<Preset['splat']>) => void
     setCursor: (axis: 'x' | 'y', patch: Partial<Preset['cursor']['x']>) => void
+    setSymmetry: (patch: Partial<CursorSymmetry>) => void
     setButton: (slot: ButtonSlot, binding: ButtonBinding) => void
     setScroll: (patch: Partial<Preset['scroll']>) => void
     setAudio: (patch: Partial<Preset['audio']>) => void
@@ -63,7 +66,7 @@
     { id: 'right', label: 'Right', hint: 'Click runs once. Hold lasts while the right button is down. Either one can switch a setting between two values.' },
     { id: 'middle', label: 'Middle', hint: 'Click runs once. Hold lasts while the middle button is down. Either one can switch a setting between two values.' },
     { id: 'scroll', label: 'Scroll', hint: 'Scrolling down increases the chosen setting, up to this range.' },
-    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, which colors it uses, and which settings follow its position.' },
+    { id: 'cursor', label: 'Cursor', hint: 'When the cursor paints, which colors it uses, mirror or rotation copies, and which settings follow its position.' },
     { id: 'audio', label: 'Audio', hint: 'Microphone is the room. System is everything playing on this computer. Beats can run an action, each band can move a setting, and the sound can paint on its own.' },
     { id: 'flow', label: 'Flow', hint: 'How the fluid moves and fades.' },
     { id: 'general', label: 'General', hint: 'Bloom, shading, pause, and the background.' },
@@ -213,7 +216,12 @@
     if (id === 'preset') return preset.name
     if (id === 'left' || id === 'right' || id === 'middle') return bindingDetail(preset[id])
     if (id === 'scroll') return controlFor(preset.scroll.setting).label
-    if (id === 'cursor') return preset.splat.paint === 'left' ? 'Left' : preset.splat.paint === 'right' ? 'Right' : 'Always'
+    if (id === 'cursor') {
+      const symmetry = completeSymmetry(preset.cursor.symmetry)
+      if (symmetry.kind === 'mirror') return `Mirror ×${symmetry.count}`
+      if (symmetry.kind === 'rotate') return `Rotate ×${symmetry.count}`
+      return preset.splat.paint === 'left' ? 'Left' : preset.splat.paint === 'right' ? 'Right' : 'Always'
+    }
     if (id === 'audio') {
       if (audio.source === 'mic') return 'Mic'
       if (audio.source === 'system') return 'System'
@@ -316,8 +324,26 @@
 {/snippet}
 
 {#snippet colorList(key: string, label: string, colors: number[], onChange: (next: number[]) => void)}
+  {@const picked = colorListPresetIndex(colors)}
   <div class="colors">
     <span class="name">{label}</span>
+    <label class="field palette">
+      <span class="name">Palette</span>
+      <select
+        value={picked < 0 ? '' : String(picked)}
+        onchange={(event) => {
+          const value = event.currentTarget.value
+          if (value === '') return
+          const preset = colorListPresets[Number(value)]
+          if (preset) onChange(preset.colors.slice())
+        }}
+      >
+        <option value="">Custom</option>
+        {#each colorListPresets as preset, index (`${preset.name}-${index}`)}
+          <option value={String(index)}>{preset.name}</option>
+        {/each}
+      </select>
+    </label>
     <div class="swatches" role="list">
       {#each colors as color, index (index)}
         <div
@@ -400,9 +426,10 @@
         </select>
       </label>
     {:else if isChoiceParam(param)}
+      {@const selected = paramChoice(stored, param.key, param.options, param.default)}
       <label class="field">
         <span class="name">{param.label}</span>
-        <select value={paramEase(stored, param.key)} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
+        <select value={selected} onchange={(event) => setParam(param.key, event.currentTarget.value)}>
           {#each param.options as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}
@@ -713,6 +740,47 @@
                 )}
               {/each}
             </div>
+          </div>
+          {@const symmetry = completeSymmetry(preset.cursor.symmetry)}
+          <div class="group">
+            <label class="field">
+              <span class="name">Symmetry</span>
+              <select
+                value={symmetry.kind}
+                onchange={(event) => {
+                  const kind = event.currentTarget.value
+                  if (kind === 'off' || kind === 'mirror' || kind === 'rotate') setSymmetry({ kind })
+                }}
+              >
+                <option value="off">Off</option>
+                <option value="mirror">Mirror</option>
+                <option value="rotate">Rotate</option>
+              </select>
+            </label>
+            {#if symmetry.kind !== 'off'}
+              <div class="group-body">
+                <p class="note aside">
+                  {#if symmetry.kind === 'mirror'}
+                    Reflects the stroke through the center. ×2 is left and right. ×4 adds up and down. ×6 and ×8 add more lines. The lines stay invisible and leave the fluid alone.
+                  {:else}
+                    Turns copies of the stroke around the center. ×2 is a half turn, ×3 is three wedges, and ×4, ×6, and ×8 add more.
+                  {/if}
+                  The copy follows the movement and paints only while this cursor is painting.
+                </p>
+                <div class="source-switch count-switch" role="group" aria-label="How many copies">
+                  {#each (symmetry.kind === 'mirror' ? mirrorCounts : rotateCounts) as count (count)}
+                    <button
+                      type="button"
+                      class:on={symmetry.count === count}
+                      aria-pressed={symmetry.count === count}
+                      onclick={() => setSymmetry({ count })}
+                    >
+                      ×{count}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           </div>
           {@render axisFields('x', 'Map horizontal position', 'Optional. Left uses the minimum, right uses the maximum. Swap the two to flip it.')}
           {@render axisFields('y', 'Map vertical position', 'Optional. Top uses the minimum, bottom uses the maximum. Swap the two to flip it.')}
@@ -1326,6 +1394,11 @@
     cursor: default;
   }
 
+  .count-switch {
+    grid-template-columns: repeat(auto-fit, minmax(3.2rem, 1fr));
+    max-width: 22rem;
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -1414,6 +1487,11 @@
   .colors {
     max-width: 32rem;
     margin: 0 0 0.85rem;
+  }
+
+  .colors .palette {
+    margin-top: 0.15rem;
+    margin-bottom: 0.2rem;
   }
 
   .swatches {

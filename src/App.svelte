@@ -5,7 +5,7 @@
   import { playPreset } from './lib/performance/playPreset'
   import { defaultPreset } from './lib/presets/defaultPreset'
 import { loadPerformance, loadPresetLibrary, savePerformance, savePresetLibrary, type PerformanceSettings } from './lib/presets/storage'
-import { applySettings, defaultAudio, type AudioBand, type AudioMap, type AxisMap, type ButtonBinding, type ButtonSlot, type Preset } from './lib/presets/types'
+import { applySettings, completeSymmetry, defaultAudio, type AudioBand, type AudioMap, type AxisMap, type ButtonBinding, type ButtonSlot, type CursorSymmetry, type Preset } from './lib/presets/types'
 import type { PresetNumberSetting } from './lib/behaviors'
 
   type BooleanSetting = Exclude<FluidBooleanSetting, 'COLORFUL'>
@@ -65,6 +65,13 @@ import type { PresetNumberSetting } from './lib/behaviors'
 
   function setCursor(axis: 'x' | 'y', patch: Partial<AxisMap>) {
     Object.assign(livePreset().cursor[axis], patch)
+  }
+
+  function setSymmetry(patch: Partial<CursorSymmetry>) {
+    const cursor = livePreset().cursor
+    const next = completeSymmetry({ ...completeSymmetry(cursor.symmetry), ...patch })
+    if (!cursor.symmetry) cursor.symmetry = next
+    else Object.assign(cursor.symmetry, next)
   }
 
   function setButton(slot: ButtonSlot, binding: ButtonBinding) {
@@ -212,6 +219,7 @@ import type { PresetNumberSetting } from './lib/behaviors'
     {commitColor}
     {setSplat}
     {setCursor}
+    {setSymmetry}
     {setButton}
     {setScroll}
     {setAudio}

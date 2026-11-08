@@ -3,6 +3,7 @@ import type { AudioFrame } from '../audio/analyze'
 import type { FluidColor, FluidSim } from '../fluid/createFluidSim'
 import { actionParams, clickAction, dyeFromColor, easeBlend, holdAction, snapControl, splatColor, type EaseMode, type PaintState, type PresetNumberSetting } from '../behaviors'
 import type { HeldButtons } from '../input/pointerInput'
+import { symmetryStrokes } from '../input/cursorSymmetry'
 import { watchPointer } from '../input/pointerInput'
 import { applySettings, defaultAudio, defaultSplatColors, splatColorMode, type AudioMap, type ButtonSlot, type DriveSource, type Preset } from '../presets/types'
 
@@ -43,7 +44,11 @@ export function playPreset(canvas: HTMLCanvasElement, sim: FluidSim, getPreset: 
       const paint = collectHold(move.buttons, move)
       sim.set('SPLAT_RADIUS', paint.radius ?? getPreset().settings.SPLAT_RADIUS)
       if (!paint.paint) return
-      sim.splat(move.x, move.y, move.dx * paint.force, move.dy * paint.force, currentColor())
+      const color = currentColor()
+      const force = paint.force
+      for (const stroke of symmetryStrokes(preset.cursor.symmetry, move.x, move.y, move.dx * force, move.dy * force, width, height)) {
+        sim.splat(stroke.x, stroke.y, stroke.dx, stroke.dy, color)
+      }
     },
     onButtons(next, point) {
       const preset = getPreset()

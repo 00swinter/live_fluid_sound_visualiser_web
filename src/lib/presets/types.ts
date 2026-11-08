@@ -21,6 +21,29 @@ export type AxisMap = {
   max: number
 }
 
+/** Mirror lines through the center always make an even number of copies. */
+export const mirrorCounts = [2, 4, 6, 8] as const
+
+/** Rotation can also split the screen into three wedges. */
+export const rotateCounts = [2, 3, 4, 6, 8] as const
+
+export type SymmetryKind = 'off' | 'mirror' | 'rotate'
+
+/** Extra paint copies of the real cursor. The seams are not drawn and do not affect the fluid. */
+export type CursorSymmetry = {
+  kind: SymmetryKind
+  /** Copies including the real cursor. Kept while symmetry is off so the last choice returns. */
+  count: number
+}
+
+export function completeSymmetry(raw: unknown): CursorSymmetry {
+  const value = raw && typeof raw === 'object' ? (raw as Partial<CursorSymmetry>) : {}
+  const kind = value.kind === 'mirror' || value.kind === 'rotate' ? value.kind : 'off'
+  const allowed = kind === 'mirror' ? mirrorCounts : rotateCounts
+  const count = (allowed as readonly number[]).includes(Number(value.count)) ? Number(value.count) : 2
+  return { kind, count }
+}
+
 export type AudioBand = 'level' | 'bass' | 'mid' | 'treble'
 
 /** Maps one audio band onto a setting. Quiet is the minimum, loud is the maximum. */
@@ -127,6 +150,8 @@ export type Preset = {
   cursor: {
     x: AxisMap
     y: AxisMap
+    /** Mirror or rotation copies of the paint stroke. Off by default. */
+    symmetry: CursorSymmetry
   }
   settings: PresetSettings
   left: ButtonBinding

@@ -1,6 +1,6 @@
 import { properties, snapControl, type ParamValue, type PerformanceSetting } from '../behaviors'
 import { defaultPreset } from './defaultPreset'
-import { completeAudio, splatColorMode, type AxisMap, type ButtonBinding, type Preset, type PresetSettings, type ScrollSetting } from './types'
+import { completeAudio, completeSymmetry, splatColorMode, type AxisMap, type ButtonBinding, type Preset, type PresetSettings, type ScrollSetting } from './types'
 
 const STORAGE_KEY = 'live-fluid-presets'
 const PERFORMANCE_KEY = 'live-fluid-performance'
@@ -129,6 +129,7 @@ function parsePreset(raw: unknown): Preset | null {
     cursor: {
       x: parseAxis(value.cursor?.x, base.cursor.x),
       y: parseAxis(value.cursor?.y, base.cursor.y),
+      symmetry: completeSymmetry(value.cursor?.symmetry),
     },
     settings: parseSettings(value.settings),
     left: parseBinding(value.left, base.left),
